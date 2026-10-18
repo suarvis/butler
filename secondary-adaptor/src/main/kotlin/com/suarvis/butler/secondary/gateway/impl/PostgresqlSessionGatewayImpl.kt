@@ -11,12 +11,15 @@ import com.suarvis.butler.core.domain.session.SessionSummary
 import com.suarvis.butler.core.gateway.SessionGateway
 import com.suarvis.butler.secondary.persistence.postgresql.mapper.SessionPostgresqlPersistenceMapper
 import com.suarvis.butler.secondary.persistence.postgresql.repository.SessionJdbcRepository
+import com.suarvis.butler.secondary.persistence.postgresql.support.PostgresqlSchema
+import org.flywaydb.core.api.FlywayException
 import org.springframework.dao.DataAccessException
 import org.springframework.transaction.support.TransactionTemplate
 
 class PostgresqlSessionGatewayImpl(
     private val repository: SessionJdbcRepository,
     private val transactions: TransactionTemplate,
+    private val schema: PostgresqlSchema,
 ) : SessionGateway {
     override fun findById(workspace: WorkspaceRoot, id: SessionId): Session? =
         storageCall("read session $id") {
@@ -54,7 +57,10 @@ class PostgresqlSessionGatewayImpl(
 
     private inline fun <T> storageCall(action: String, block: () -> T): T =
         try {
+            schema.ensureMigrated()
             block()
+        } catch (error: FlywayException) {
+            throw GatewayException("Could not $action: database schema migration failed (${error.message})", error)
         } catch (error: DataAccessException) {
             throw GatewayException("Could not $action: ${error.mostSpecificCause.message}", error)
         } catch (error: GatewayException) {

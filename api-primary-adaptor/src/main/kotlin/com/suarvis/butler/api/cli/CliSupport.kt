@@ -1,6 +1,7 @@
 package com.suarvis.butler.api.cli
 
 import org.springframework.stereotype.Component
+import java.io.InputStream
 import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -46,19 +47,33 @@ enum class OutputFormat {
     }
 }
 
-/** Where command output goes. Resolved on every call so tests can redirect System.out/err. */
+/** Where command input comes from and output goes. Resolved on every call so tests can redirect System.in/out/err. */
 interface CliConsole {
+    val input: InputStream
     val out: PrintStream
     val err: PrintStream
+
+    /** True when a person is typing at a terminal, false when input is piped or redirected. */
+    val interactive: Boolean
 }
 
 @Component
 class SystemCliConsole : CliConsole {
+    override val input: InputStream
+        get() = System.`in`
+
     override val out: PrintStream
         get() = System.out
 
     override val err: PrintStream
         get() = System.err
+
+    // JDK 22+ returns a Console even when redirected, so ask it whether it is a terminal when possible.
+    override val interactive: Boolean
+        get() {
+            val console = System.console() ?: return false
+            return runCatching { console.javaClass.getMethod("isTerminal").invoke(console) as Boolean }.getOrDefault(true)
+        }
 }
 
 /** Process environment, isolated so rules and resolvers stay unit-testable. */

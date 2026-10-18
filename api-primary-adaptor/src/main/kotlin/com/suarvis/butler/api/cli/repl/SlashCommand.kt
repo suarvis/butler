@@ -24,11 +24,21 @@ sealed interface SlashCommand {
     data object Version : SlashCommand
 
     data object Help : SlashCommand
+
+    /** Interactive only: show or change the model for the following turns. */
+    data class Model(val name: String?) : SlashCommand
+
+    /** Interactive only: start a fresh session. */
+    data object Clear : SlashCommand
+
+    /** Interactive only: leave the REPL. */
+    data object Exit : SlashCommand
 }
 
 /** Splits `/status /export notes.md /session fork try-b` into commands with their arguments. */
 object SlashCommandParser {
     const val SUPPORTED = "/status, /export [file], /session [list|exists ID|switch ID|fork [branch]|delete ID], /version, /help"
+    const val INTERACTIVE_ONLY = "/model [name], /clear, /exit"
 
     fun parse(tokens: List<String>): List<SlashCommand> {
         if (tokens.isEmpty()) return emptyList()
@@ -49,6 +59,9 @@ object SlashCommandParser {
             "version" -> noArguments(name, args, SlashCommand.Version)
             "help" -> noArguments(name, args, SlashCommand.Help)
             "session" -> session(args)
+            "model" -> SlashCommand.Model(atMostOne(name, args))
+            "clear" -> SlashCommand.Clear
+            "exit", "quit" -> noArguments(name, args, SlashCommand.Exit)
             else -> throw CliUsageException("unsupported_resumed_command", "Unknown or unsupported slash command '/$name'", "Supported: $SUPPORTED")
         }
 

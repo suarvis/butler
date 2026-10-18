@@ -194,14 +194,6 @@ class CliEndToEndTest {
     }
 
     @Test
-    fun `prompt text is rejected until the conversation slice lands`() {
-        val run = butler("--output-format", "json", "explain this repository")
-
-        assertEquals(ExitCodes.USAGE, run.exitCode)
-        assertEquals("unsupported_command", run.json()["kind"]?.jsonPrimitive?.content)
-    }
-
-    @Test
     fun `the filesystem root is refused as a workspace`() {
         val run = butler("--output-format", "json", "status", "--cwd", "/")
 

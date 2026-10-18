@@ -31,7 +31,12 @@ class PostgresqlSessionGatewayImplTest : SessionGatewayContract() {
     fun cleanDatabase() {
         val jdbc = JdbcClient.create(dataSource)
         jdbc.sql("truncate table butler_session cascade").update()
-        gateway = PostgresqlSessionGatewayImpl(SessionJdbcRepository(jdbc), TransactionTemplate(DataSourceTransactionManager(dataSource)))
+        gateway =
+            PostgresqlSessionGatewayImpl(
+                SessionJdbcRepository(jdbc),
+                TransactionTemplate(DataSourceTransactionManager(dataSource)),
+                PostgresqlSchema(dataSource),
+            )
     }
 
     override fun gateway(): SessionGateway = gateway

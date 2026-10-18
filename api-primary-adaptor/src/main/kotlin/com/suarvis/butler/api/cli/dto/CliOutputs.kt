@@ -164,3 +164,37 @@ data class ExportOutput(
     val outputPath: String?,
     val markdown: String?,
 )
+
+@Serializable
+data class ToolUseOutput(
+    val id: String,
+    val name: String,
+    val input: String,
+)
+
+@Serializable
+data class ToolResultOutput(
+    val toolUseId: String,
+    val toolName: String,
+    val output: String,
+    val isError: Boolean,
+)
+
+/** Clawcode's one-shot prompt result (`claw --output-format json prompt ...`) plus kind/status/session/provider. */
+@Serializable
+data class PromptResultOutput(
+    val kind: String = "prompt",
+    val status: String = "ok",
+    val message: String,
+    val model: String,
+    val provider: String,
+    val sessionId: String,
+    val iterations: Int,
+    val autoCompaction: String? = null,
+    val toolUses: List<ToolUseOutput>,
+    val toolResults: List<ToolResultOutput>,
+    val promptCacheEvents: List<String> = emptyList(),
+    val usage: UsageOutput,
+    val estimatedCost: String?,
+    val stopReason: String,
+)

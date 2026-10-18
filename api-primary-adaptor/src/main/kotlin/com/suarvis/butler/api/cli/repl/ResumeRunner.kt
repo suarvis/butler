@@ -6,6 +6,7 @@ import com.suarvis.butler.api.cli.action.SessionActions
 import com.suarvis.butler.api.cli.command.CliInvocation
 import com.suarvis.butler.api.cli.dto.HelpOutput
 import com.suarvis.butler.api.cli.dto.VersionOutput
+import com.suarvis.butler.api.cli.exception.CliUsageException
 import com.suarvis.butler.api.cli.render.CliOutputWriter
 import com.suarvis.butler.api.cli.render.SessionTextRenderer
 import com.suarvis.butler.core.domain.generic.BranchName
@@ -50,6 +51,12 @@ class ResumeRunner(
             is SlashCommand.SessionDelete -> current.also { sessions.delete(invocation, SessionReference.parse(command.target)) }
             SlashCommand.Version -> current.also { printVersion(invocation) }
             SlashCommand.Help -> current.also { printHelp(invocation) }
+            is SlashCommand.Model, SlashCommand.Clear, SlashCommand.Exit ->
+                throw CliUsageException(
+                    "unsupported_resumed_command",
+                    "This slash command only works in the interactive REPL",
+                    "Run `butler --resume ${current.id}` (no slash commands) to continue that session interactively.",
+                )
         }
 
     private fun printVersion(invocation: CliInvocation) {

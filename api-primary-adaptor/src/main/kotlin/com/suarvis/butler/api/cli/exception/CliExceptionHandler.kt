@@ -9,6 +9,9 @@ import com.suarvis.butler.api.security.authorization.AuthorizationDeniedExceptio
 import com.suarvis.butler.core.domain.exception.ButlerException
 import com.suarvis.butler.core.domain.exception.DomainValidationException
 import com.suarvis.butler.core.domain.exception.GatewayException
+import com.suarvis.butler.core.domain.exception.ModelProviderException
+import com.suarvis.butler.core.domain.exception.ModelProviderException.Failure
+import com.suarvis.butler.core.domain.generic.ProviderKind
 import com.suarvis.butler.core.domain.exception.SessionNotFoundException
 import com.suarvis.butler.core.domain.exception.TranscriptIntegrityException
 import org.slf4j.LoggerFactory
@@ -29,6 +32,9 @@ class CliExceptionHandler(
     fun handleParseError(error: CommandLine.ParameterException, args: List<String>): Int = report(classifyParseError(error), args)
 
     fun handleExecutionError(error: Throwable, args: List<String>): Int = report(classify(error), args)
+
+    /** For the REPL: report an error in the session's output format without ending the process. */
+    fun report(error: Throwable, format: OutputFormat): Int = write(classify(error), format)
 
     fun classify(error: Throwable): CliFailure =
         when (val cause = knownCause(error)) {
@@ -59,7 +65,25 @@ class CliExceptionHandler(
                     "Check the butler.persistence settings (BUTLER_PERSISTENCE_* environment variables).",
                     ExitCodes.RUNTIME,
                 )
+            is ModelProviderException -> classifyProvider(error)
         }
+
+    private fun classifyProvider(error: ModelProviderException): CliFailure {
+        val keyVariable = if (error.provider == ProviderKind.ANTHROPIC) "ANTHROPIC_API_KEY" else "the provider's API key setting"
+        val (kind, hint) =
+            when (error.failure) {
+                Failure.NOT_CONFIGURED -> "missing_credentials" to "Set $keyVariable, or pick another model with --model."
+                Failure.AUTHENTICATION -> "provider_authentication" to "Check that $keyVariable is valid."
+                Failure.RATE_LIMITED ->
+                    "rate_limited" to (error.retryAfterSeconds?.let { "Retry in ${it}s, or switch model with --model." } ?: "Retry shortly, or switch model with --model.")
+                Failure.OVERLOADED -> "provider_overloaded" to "The provider is overloaded; retry shortly or switch model with --model."
+                Failure.SERVER_ERROR -> "provider_error" to "Retry shortly; the provider reported an internal error."
+                Failure.TRANSPORT -> "provider_unreachable" to "Check your network connection and the provider base URL."
+                Failure.INVALID_REQUEST -> "provider_invalid_request" to "Re-run with BUTLER_LOG_LEVEL=DEBUG for details."
+                Failure.INVALID_RESPONSE -> "provider_invalid_response" to "Re-run with BUTLER_LOG_LEVEL=DEBUG for details."
+            }
+        return CliFailure(kind, error.messageOrName(), hint, ExitCodes.RUNTIME)
+    }
 
     private fun classifyParseError(error: CommandLine.ParameterException): CliFailure {
         val option = error.argSpec as? CommandLine.Model.OptionSpec
@@ -73,8 +97,10 @@ class CliExceptionHandler(
         return CliFailure(kind, error.messageOrName(), DEFAULT_HINT, ExitCodes.USAGE)
     }
 
-    private fun report(failure: CliFailure, args: List<String>): Int {
-        val format = OutputFormat.detect(args, environment.variable(OutputFormat.ENV_VARIABLE))
+    private fun report(failure: CliFailure, args: List<String>): Int =
+        write(failure, OutputFormat.detect(args, environment.variable(OutputFormat.ENV_VARIABLE)))
+
+    private fun write(failure: CliFailure, format: OutputFormat): Int {
         val payload =
             ErrorOutput(
                 kind = failure.kind,

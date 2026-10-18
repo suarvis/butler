@@ -17,3 +17,31 @@ butler:
       username: butler
       # Set BUTLER_PERSISTENCE_POSTGRESQL_PASSWORD; there is deliberately no default.
       password: ""
+
+  # Model catalog: aliases (as in Clawcode), output limits and USD prices per million tokens.
+  # Prices are estimates for display and budgets; check your provider's pricing page.
+  models:
+    default: sonnet
+    aliases:
+      opus: claude-opus-4-7
+      sonnet: claude-sonnet-4-6
+      haiku: claude-haiku-4-5
+    profiles:
+      claude-opus-4-7:
+        provider: anthropic
+        max-output-tokens: 32000
+        pricing: { input: 5.00, output: 25.00, cache-write: 6.25, cache-read: 0.50 }
+      claude-sonnet-4-6:
+        provider: anthropic
+        max-output-tokens: 64000
+        pricing: { input: 3.00, output: 15.00, cache-write: 3.75, cache-read: 0.30 }
+      claude-haiku-4-5:
+        provider: anthropic
+        max-output-tokens: 64000
+        pricing: { input: 1.00, output: 5.00, cache-write: 1.25, cache-read: 0.10 }
+
+  # Bring your own key: read from the environment, never stored by Butler.
+  providers:
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}

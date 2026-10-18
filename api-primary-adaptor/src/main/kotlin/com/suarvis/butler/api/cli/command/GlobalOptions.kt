@@ -16,6 +16,9 @@ class GlobalOptions {
     )
     var outputFormat: OutputFormat? = null
 
+    @Option(names = ["--model"], paramLabel = "MODEL", description = ["Model or alias for this run, e.g. sonnet, opus, haiku or a full model id."])
+    var model: String? = null
+
     @Option(names = ["--cwd", "-C", "--directory"], paramLabel = "PATH", description = ["Run as if launched from PATH."])
     var workingDirectory: String? = null
 

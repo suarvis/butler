@@ -2,7 +2,7 @@
 
 Butler is a rewrite of [Claw Code](https://github.com/ultraworkers/claw-code) (the `claw` terminal coding agent) in **Kotlin + Spring Boot**, built on a strict clean architecture. It runs as a single local process: the CLI, the agent loop and the tools live in one JVM, and the tools act on the folder you run it from.
 
-> **Status:** slices 0–1 of the rewrite. The project skeleton, the architecture guards and saved **sessions** (file and PostgreSQL stores, CLI commands) are in place. The conversation loop, model providers, tools, approvals and MCP come in the next slices.
+> **Status:** slices 0–2 of the rewrite. In place: project skeleton and architecture guards, saved **sessions** (file and PostgreSQL stores), and **conversations with Anthropic models** (one-shot prompts, streaming, a basic interactive REPL). Model routing and budgets, the OpenAI-compatible provider, tools, approvals and MCP come in the next slices.
 
 ## Architecture
 
@@ -48,7 +48,16 @@ PostgreSQL tests use Testcontainers and are skipped automatically when Docker is
 ./gradlew :api-primary-adaptor:bootJar
 alias butler='java -jar "$PWD/api-primary-adaptor/build/libs/butler.jar"'
 
+export ANTHROPIC_API_KEY=sk-ant-...        # your own key; Butler never stores it
+
 cd ~/dev/some-project
+butler "explain how this project is built"  # one-shot prompt, streamed
+butler --model opus prompt "review the error handling"
+git diff | butler prompt --stdin "write a commit message for this"
+butler --output-format json prompt "summarise README.md"
+butler prompt --session latest "and what about the tests?"
+butler                                      # interactive REPL (/help, /model, /status, /exit)
+butler --resume latest                      # REPL continuing the latest session
 butler session list
 butler status
 butler --output-format json session list
@@ -91,7 +100,11 @@ Spring configuration properties, overridable by environment variables:
 | `butler.persistence.postgresql.url` | `BUTLER_PERSISTENCE_POSTGRESQL_URL` | `jdbc:postgresql://localhost:5432/butler` |
 | `butler.persistence.postgresql.username` | `BUTLER_PERSISTENCE_POSTGRESQL_USERNAME` | `butler` |
 | `butler.persistence.postgresql.password` | `BUTLER_PERSISTENCE_POSTGRESQL_PASSWORD` | *(none)* |
+| `butler.providers.anthropic.api-key` | `ANTHROPIC_API_KEY` | *(none)* |
+| `butler.providers.anthropic.base-url` | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` |
+| `butler.models.default` | `BUTLER_MODELS_DEFAULT` | `sonnet` |
+| `butler.models.aliases.*`, `butler.models.profiles.*` | — | Anthropic aliases, output limits and prices in `application.yml` |
 | — | `BUTLER_OUTPUT_FORMAT` | `text` |
 | — | `BUTLER_LOG_LEVEL` | `WARN` (logs go to stderr) |
 
-No secrets live in source. Provider API keys (next slices) will come from environment variables or `~/.butler/credentials`.
+No secrets live in source. Provider API keys are your own and come from environment variables.

@@ -1,12 +1,15 @@
 package com.suarvis.butler.api.config
 
 import com.suarvis.butler.core.gateway.IdentityGateway
+import com.suarvis.butler.core.gateway.ModelCatalogGateway
+import com.suarvis.butler.core.gateway.ModelGateway
 import com.suarvis.butler.core.gateway.SessionGateway
 import com.suarvis.butler.core.usecase.session.DeleteSessionUseCase
 import com.suarvis.butler.core.usecase.session.ForkSessionUseCase
 import com.suarvis.butler.core.usecase.session.GetSessionUseCase
 import com.suarvis.butler.core.usecase.session.ListSessionsUseCase
 import com.suarvis.butler.core.usecase.session.StartSessionUseCase
+import com.suarvis.butler.core.usecase.turn.RunTurnUseCase
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import java.time.Clock
@@ -41,4 +44,14 @@ class UseCaseConfig {
     @Bean
     fun deleteSessionUseCase(getSession: GetSessionUseCase, sessions: SessionGateway) =
         DeleteSessionUseCase(getSession, sessions)
+
+    @Bean
+    fun runTurnUseCase(
+        getSession: GetSessionUseCase,
+        sessions: SessionGateway,
+        identity: IdentityGateway,
+        models: ModelGateway,
+        catalog: ModelCatalogGateway,
+        clock: Clock,
+    ) = RunTurnUseCase(getSession, sessions, identity, models, catalog, clock)
 }

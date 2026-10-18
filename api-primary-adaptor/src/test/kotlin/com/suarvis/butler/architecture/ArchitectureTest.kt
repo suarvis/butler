@@ -75,6 +75,20 @@ class ArchitectureTest {
     }
 
     @Test
+    fun `provider client mappers are named ClientMapper`() {
+        classes().that().resideInAPackage("$BUTLER.secondary.client..mapper..").and().areTopLevelClasses()
+            .should().haveSimpleNameEndingWith("ClientMapper")
+            .check(classes)
+    }
+
+    @Test
+    fun `only the secondary adaptor makes HTTP calls`() {
+        noClasses().that().resideOutsideOfPackage(SECONDARY)
+            .should().dependOnClassesThat().resideInAnyPackage("java.net.http..")
+            .check(classes)
+    }
+
+    @Test
     fun `CLI mappers are named CliMapper`() {
         classes().that().resideInAPackage("$BUTLER.api.cli.mapper..").and().areTopLevelClasses()
             .should().haveSimpleNameEndingWith("CliMapper")

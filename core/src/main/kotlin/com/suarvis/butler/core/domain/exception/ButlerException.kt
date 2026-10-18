@@ -1,5 +1,6 @@
 package com.suarvis.butler.core.domain.exception
 
+import com.suarvis.butler.core.domain.generic.ProviderKind
 import com.suarvis.butler.core.domain.session.SessionReference
 
 /**
@@ -23,3 +24,26 @@ class TranscriptIntegrityException(message: String) : ButlerException(message)
 
 /** A secondary adaptor could not complete a gateway call (storage, network, ...). */
 class GatewayException(message: String, cause: Throwable? = null) : ButlerException(message, cause)
+
+/**
+ * A model provider call failed. [failure] tells callers (routing, the CLI) whether trying again
+ * or switching provider can help, without exposing HTTP details.
+ */
+class ModelProviderException(
+    val provider: ProviderKind,
+    val failure: Failure,
+    message: String,
+    val retryAfterSeconds: Long? = null,
+    cause: Throwable? = null,
+) : ButlerException(message, cause) {
+    enum class Failure(val retryable: Boolean) {
+        NOT_CONFIGURED(false),
+        AUTHENTICATION(false),
+        INVALID_REQUEST(false),
+        INVALID_RESPONSE(false),
+        RATE_LIMITED(true),
+        OVERLOADED(true),
+        SERVER_ERROR(true),
+        TRANSPORT(true),
+    }
+}

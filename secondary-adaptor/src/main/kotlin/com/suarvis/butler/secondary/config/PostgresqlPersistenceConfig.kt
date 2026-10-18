@@ -14,8 +14,8 @@ import org.springframework.transaction.support.TransactionTemplate
 import javax.sql.DataSource
 
 /**
- * Opt-in store (`butler.persistence.store=postgresql`). Beans are created lazily, so commands
- * that never touch sessions never open a connection.
+ * Opt-in store (`butler.persistence.store=postgresql`). Creating these beans opens no connection:
+ * the pool connects and migrations run on the first session query.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(prefix = "butler.persistence", name = ["store"], havingValue = "postgresql")
@@ -33,12 +33,10 @@ class PostgresqlPersistenceConfig {
     }
 
     @Bean
-    fun postgresqlSchema(dataSource: DataSource): PostgresqlSchema = PostgresqlSchema(dataSource).also { it.migrate() }
+    fun postgresqlSchema(dataSource: DataSource): PostgresqlSchema = PostgresqlSchema(dataSource)
 
-    // Taking the schema as a parameter makes Spring run migrations before the first query.
     @Bean
-    @Suppress("UNUSED_PARAMETER")
-    fun butlerJdbcClient(dataSource: DataSource, schema: PostgresqlSchema): JdbcClient = JdbcClient.create(dataSource)
+    fun butlerJdbcClient(dataSource: DataSource): JdbcClient = JdbcClient.create(dataSource)
 
     @Bean
     fun butlerTransactionTemplate(dataSource: DataSource): TransactionTemplate =
@@ -48,6 +46,9 @@ class PostgresqlPersistenceConfig {
     fun sessionJdbcRepository(jdbcClient: JdbcClient): SessionJdbcRepository = SessionJdbcRepository(jdbcClient)
 
     @Bean
-    fun sessionGateway(repository: SessionJdbcRepository, transactions: TransactionTemplate): SessionGateway =
-        PostgresqlSessionGatewayImpl(repository, transactions)
+    fun sessionGateway(
+        repository: SessionJdbcRepository,
+        transactions: TransactionTemplate,
+        schema: PostgresqlSchema,
+    ): SessionGateway = PostgresqlSessionGatewayImpl(repository, transactions, schema)
 }

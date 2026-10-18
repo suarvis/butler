@@ -5,6 +5,7 @@ import com.suarvis.butler.api.cli.OutputFormat
 import com.suarvis.butler.api.cli.exception.InvalidWorkingDirectoryException
 import com.suarvis.butler.api.security.authorization.rules.BroadWorkingDirectoryRule
 import com.suarvis.butler.api.security.authorization.rules.WorkingDirectoryRequest
+import com.suarvis.butler.core.domain.generic.ModelId
 import com.suarvis.butler.core.domain.generic.WorkspaceRoot
 import org.springframework.stereotype.Component
 import picocli.CommandLine.Model.CommandSpec
@@ -12,7 +13,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /** Everything a command needs to know about how it was invoked. */
-data class CliInvocation(val format: OutputFormat, val workspace: WorkspaceRoot)
+data class CliInvocation(val format: OutputFormat, val workspace: WorkspaceRoot, val model: ModelId? = null)
 
 @Component
 class CliInvocationResolver(
@@ -26,7 +27,8 @@ class CliInvocationResolver(
         broadWorkingDirectoryRule.authorize(
             WorkingDirectoryRequest(directory, environment.homeDirectory, options.any { it.allowBroadCwd }),
         )
-        return CliInvocation(format(options), WorkspaceRoot.of(directory))
+        val model = options.firstNotNullOfOrNull { it.model }?.let(::ModelId)
+        return CliInvocation(format(options), WorkspaceRoot.of(directory), model)
     }
 
     /** For commands that do not touch a workspace (help, version). */

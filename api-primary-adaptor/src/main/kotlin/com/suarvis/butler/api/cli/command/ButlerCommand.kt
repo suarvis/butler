@@ -1,10 +1,11 @@
 package com.suarvis.butler.api.cli.command
 
 import com.suarvis.butler.api.cli.ButlerVersion
-import com.suarvis.butler.api.cli.CliConsole
 import com.suarvis.butler.api.cli.ExitCodes
-import com.suarvis.butler.api.cli.exception.CliUsageException
+import com.suarvis.butler.api.cli.action.PromptActions
+import com.suarvis.butler.api.cli.repl.ReplRunner
 import com.suarvis.butler.api.cli.repl.ResumeRunner
+import com.suarvis.butler.core.domain.session.SessionReference
 import picocli.CommandLine.Command
 import picocli.CommandLine.IVersionProvider
 import picocli.CommandLine.Mixin
@@ -15,11 +16,12 @@ import picocli.CommandLine.Spec
 import java.util.concurrent.Callable
 
 /**
- * `butler`: mirrors Clawcode's `claw` entry point. Forms supported in this build:
- *   butler --resume [SESSION|latest] [/status] [/export FILE] [/session ...]
+ * `butler`: mirrors Clawcode's `claw` entry point.
+ *   butler                                   interactive REPL
+ *   butler TEXT                              one-shot prompt (shorthand for `butler prompt TEXT`)
+ *   butler --resume [SESSION|latest]         REPL continuing a saved session
+ *   butler --resume SESSION /status /export  run slash commands against a saved session and exit
  *   butler <subcommand>
- * The interactive REPL and prompt forms (`butler`, `butler prompt TEXT`, `butler TEXT`) arrive
- * with the conversation slice.
  */
 @Command(
     name = "butler",
@@ -27,6 +29,7 @@ import java.util.concurrent.Callable
     versionProvider = ButlerVersionProvider::class,
     description = ["Butler: a terminal coding agent (Kotlin rewrite of Clawcode)."],
     subcommands = [
+        PromptCommand::class,
         StatusCommand::class,
         SessionCommand::class,
         ExportCommand::class,
@@ -36,6 +39,10 @@ import java.util.concurrent.Callable
     footer = [
         "",
         "Examples:",
+        "  butler \"explain the build setup\"",
+        "  butler --model opus prompt \"review this design\"",
+        "  git diff | butler prompt --stdin \"write a commit message\"",
+        "  butler --resume latest",
         "  butler session list",
         "  butler --output-format json status",
         "  butler --resume latest /status /export notes.md",
@@ -44,8 +51,9 @@ import java.util.concurrent.Callable
 )
 class ButlerCommand(
     private val resumeRunner: ResumeRunner,
+    private val replRunner: ReplRunner,
+    private val prompts: PromptActions,
     private val resolver: CliInvocationResolver,
-    private val console: CliConsole,
 ) : Callable<Int> {
     @Mixin(name = GlobalOptions.MIXIN_NAME)
     lateinit var globalOptions: GlobalOptions
@@ -62,24 +70,21 @@ class ButlerCommand(
     )
     var resume: String? = null
 
-    @Parameters(paramLabel = "ARGS", description = ["Slash commands for --resume, e.g. /status /export notes.md"])
+    @Parameters(paramLabel = "ARGS", description = ["A prompt, or slash commands after --resume (e.g. /status /export notes.md)."])
     var arguments: List<String>? = null
 
     override fun call(): Int {
+        val invocation = resolver.resolve(spec)
         val reference = resume
         val rest = arguments.orEmpty()
         return when {
-            reference != null -> resumeRunner.run(resolver.resolve(spec), reference, rest)
-            rest.isNotEmpty() ->
-                throw CliUsageException(
-                    kind = "unsupported_command",
-                    message = "Prompting is not available in this build yet: '${rest.joinToString(" ")}'",
-                    hint = "Available now: butler status, butler session list, butler export, butler --resume latest /status.",
-                )
-            else -> {
-                spec.commandLine().usage(console.out)
+            reference != null && rest.isEmpty() && !reference.startsWith("/") -> replRunner.run(invocation, SessionReference.parse(reference))
+            reference != null -> resumeRunner.run(invocation, reference, rest)
+            rest.isNotEmpty() -> {
+                prompts.run(invocation, prompts.promptText(rest, readStdin = false), session = null, compact = false)
                 ExitCodes.OK
             }
+            else -> replRunner.run(invocation)
         }
     }
 }
