@@ -1,0 +1,44 @@
+# Local infrastructure for Butler.
+#
+#   docker compose up -d postgres                 # PostgreSQL + pgvector for the postgresql store
+#   docker compose run --rm butler session list   # run the CLI in a container against ./ (or $BUTLER_WORKSPACE)
+#
+# The default store is files, which needs none of this. The password below is a local-only
+# default; override it with BUTLER_DB_PASSWORD.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: butler
+      POSTGRES_USER: butler
+      POSTGRES_PASSWORD: ${BUTLER_DB_PASSWORD:-butler-local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U butler -d butler"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  butler:
+    build: .
+    profiles: ["cli"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BUTLER_PERSISTENCE_STORE: postgresql
+      BUTLER_PERSISTENCE_POSTGRESQL_URL: jdbc:postgresql://postgres:5432/butler
+      BUTLER_PERSISTENCE_POSTGRESQL_USERNAME: butler
+      BUTLER_PERSISTENCE_POSTGRESQL_PASSWORD: ${BUTLER_DB_PASSWORD:-butler-local}
+    volumes:
+      - ${BUTLER_WORKSPACE:-.}:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+volumes:
+  postgres-data:

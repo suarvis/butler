@@ -1,0 +1,38 @@
+[versions]
+kotlin = "2.3.20"
+spring-boot = "4.0.6"
+kotlinx-serialization = "1.9.0"
+picocli = "4.7.7"
+archunit = "1.4.1"
+junit = "6.0.0"
+
+[libraries]
+# Gradle plugins used by build-logic convention plugins
+plugin-kotlin-gradle = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+plugin-kotlin-allopen = { module = "org.jetbrains.kotlin:kotlin-allopen", version.ref = "kotlin" }
+plugin-kotlin-serialization = { module = "org.jetbrains.kotlin:kotlin-serialization", version.ref = "kotlin" }
+plugin-spring-boot = { module = "org.springframework.boot:spring-boot-gradle-plugin", version.ref = "spring-boot" }
+
+# Platforms
+spring-boot-bom = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "spring-boot" }
+junit-bom = { module = "org.junit:junit-bom", version.ref = "junit" }
+
+# Versions managed by the Spring Boot BOM
+spring-boot-starter-base = { module = "org.springframework.boot:spring-boot-starter" }
+spring-boot-starter-test = { module = "org.springframework.boot:spring-boot-starter-test" }
+spring-jdbc = { module = "org.springframework:spring-jdbc" }
+hikaricp = { module = "com.zaxxer:HikariCP" }
+flyway-core = { module = "org.flywaydb:flyway-core" }
+flyway-postgresql = { module = "org.flywaydb:flyway-database-postgresql" }
+postgresql = { module = "org.postgresql:postgresql" }
+testcontainers = { module = "org.testcontainers:testcontainers" }
+
+# Explicit versions
+kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref = "kotlin" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
+picocli = { module = "info.picocli:picocli", version.ref = "picocli" }
+archunit = { module = "com.tngtech.archunit:archunit", version.ref = "archunit" }
+
+# Test (versions from junit-bom)
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }

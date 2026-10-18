@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: butler
+  main:
+    # A CLI invocation should only build what the chosen command needs; for example `butler version`
+    # never opens a database connection.
+    lazy-initialization: true
+
+butler:
+  persistence:
+    # file (default, Clawcode-compatible JSONL under <workspace>/.butler/sessions) or postgresql.
+    store: file
+    file:
+      directory: .butler/sessions
+    postgresql:
+      url: jdbc:postgresql://localhost:5432/butler
+      username: butler
+      # Set BUTLER_PERSISTENCE_POSTGRESQL_PASSWORD; there is deliberately no default.
+      password: ""
