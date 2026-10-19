@@ -15,10 +15,15 @@ interface ModelGateway {
     fun stream(request: ModelRequest, onEvent: (ModelStreamEvent) -> Unit): ModelResponse
 }
 
-/** Model facts: aliases, provider, output limits and pricing. */
+/** Model facts: aliases, which provider serves a model, output limits and pricing. */
 interface ModelCatalogGateway {
     fun defaultModel(): ModelId
 
-    /** Resolves an alias (e.g. `sonnet`) or a full id; unknown ids are passed through with defaults. */
+    /**
+     * Resolves an alias (`sonnet`), a full id (`gpt-5.5`) or a `provider/model` reference
+     * (`ollama/llama3.2`). Ids missing from the catalog still resolve when a provider claims them.
+     *
+     * @throws com.suarvis.butler.core.domain.exception.UnknownModelException when no configured provider serves the model.
+     */
     fun resolve(model: ModelId): ModelProfile
 }

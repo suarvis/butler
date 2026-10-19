@@ -2,9 +2,11 @@ package com.suarvis.butler.core.usecase.turn
 
 import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.exception.SessionNotFoundException
+import com.suarvis.butler.core.domain.exception.UnknownModelException
 import com.suarvis.butler.core.domain.generic.JsonText
 import com.suarvis.butler.core.domain.generic.MessageRole
 import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.ProviderKind
 import com.suarvis.butler.core.domain.generic.SessionId
 import com.suarvis.butler.core.domain.generic.TokenUsage
@@ -46,7 +48,7 @@ class RunTurnUseCaseTest {
         assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT), saved.messages.map { it.role })
         assertEquals("Hello there", summary.finalText)
         assertEquals(TokenUsage(inputTokens = 10, outputTokens = 5), saved.messages.last().usage)
-        assertEquals(ModelId("sonnet"), saved.model)
+        assertEquals(ModelId("claude-sonnet-4-6"), saved.model)
         assertEquals(1, summary.iterations)
     }
 
@@ -58,7 +60,7 @@ class RunTurnUseCaseTest {
 
         val request = models.requests.single()
         assertEquals(ModelId("claude-opus-4-7"), request.model.id)
-        assertEquals(ProviderKind.ANTHROPIC, request.model.provider)
+        assertEquals(ProviderKind.ANTHROPIC, request.model.provider.kind)
         assertTrue(request.systemPrompt.contains(workspace.toString()), request.systemPrompt)
         assertEquals(listOf(ConversationMessage.userText("Explain")), request.messages)
     }
@@ -92,15 +94,54 @@ class RunTurnUseCaseTest {
     }
 
     @Test
-    fun `an explicit model switches the session's model`() {
+    fun `an explicit model switches the session's model, stored by its canonical id`() {
         val models = ScriptedModelGateway(ScriptedModelGateway.answer("x"), ScriptedModelGateway.answer("y"))
         val turns = useCase(models)
         val first = turns.execute(RunTurnUseCase.Command(workspace, "one"))
 
         val second = turns.execute(RunTurnUseCase.Command(workspace, "two", SessionReference.Latest, ModelId("opus")))
 
-        assertEquals(ModelId("opus"), second.session.model)
-        assertEquals(ModelId("sonnet"), first.session.model)
+        assertEquals(ModelId("claude-opus-4-7"), second.session.model)
+        assertEquals(ModelId("claude-sonnet-4-6"), first.session.model)
+    }
+
+    @Test
+    fun `a session can switch provider part-way and the new provider gets the whole conversation`() {
+        val models = ScriptedModelGateway(ScriptedModelGateway.answer("from Claude"), ScriptedModelGateway.answer("from GPT"))
+        val turns = useCase(models)
+        turns.execute(RunTurnUseCase.Command(workspace, "one"))
+
+        val second = turns.execute(RunTurnUseCase.Command(workspace, "two", SessionReference.Latest, ModelId("gpt-5.5")))
+
+        val request = models.requests.last()
+        assertEquals(FixedModelCatalog.OPENAI, request.model.provider)
+        assertEquals(listOf("one", "from Claude", "two"), request.messages.map { it.text })
+        assertEquals(ModelId("gpt-5.5"), sessions.findLatest(workspace)!!.model)
+        assertEquals("from GPT", second.finalText)
+    }
+
+    @Test
+    fun `tool history and thinking are sent as text while no tools are offered`() {
+        sessions.save(SessionFixtures.sessionWithToolRoundTrip("session-tools"))
+        val models = ScriptedModelGateway(ScriptedModelGateway.answer("ok"))
+
+        useCase(models).execute(RunTurnUseCase.Command(workspace, "And now?", SessionReference.ById(SessionId("session-tools"))))
+
+        val sent = models.requests.single().messages
+        assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.USER, MessageRole.ASSISTANT, MessageRole.USER), sent.map { it.role })
+        assertTrue(sent.flatMap { it.blocks }.all { it is ContentBlock.Text }, sent.toString())
+        assertTrue(sent[1].text.contains("read_file"), sent[1].text)
+        assertTrue(sent[2].text.contains("# Demo"), sent[2].text)
+    }
+
+    @Test
+    fun `an unknown model fails before anything is saved or sent`() {
+        val models = ScriptedModelGateway()
+
+        assertThrows<UnknownModelException> { useCase(models).execute(RunTurnUseCase.Command(workspace, "hi", model = ModelId("mystery-model"))) }
+
+        assertTrue(models.requests.isEmpty())
+        assertEquals(null, sessions.findLatest(workspace))
     }
 
     @Test
@@ -123,7 +164,7 @@ class RunTurnUseCaseTest {
 
     @Test
     fun `a provider failure keeps the prompt and propagates the error`() {
-        val failure = ModelProviderException(ProviderKind.ANTHROPIC, ModelProviderException.Failure.RATE_LIMITED, "slow down", 30)
+        val failure = ModelProviderException(ProviderId("anthropic"), ModelProviderException.Failure.RATE_LIMITED, "slow down", 30)
         val models = ScriptedModelGateway(ScriptedModelGateway.Reply.Failure(failure))
 
         val thrown = assertThrows<ModelProviderException> { useCase(models).execute(RunTurnUseCase.Command(workspace, "keep me")) }

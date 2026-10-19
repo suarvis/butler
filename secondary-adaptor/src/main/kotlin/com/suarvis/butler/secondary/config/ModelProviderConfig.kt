@@ -1,25 +1,40 @@
 package com.suarvis.butler.secondary.config
 
+import com.suarvis.butler.core.domain.generic.ProviderId
+import com.suarvis.butler.core.domain.generic.ProviderKind
 import com.suarvis.butler.core.gateway.ModelCatalogGateway
 import com.suarvis.butler.core.gateway.ModelGateway
 import com.suarvis.butler.secondary.client.anthropic.AnthropicMessagesClient
+import com.suarvis.butler.secondary.client.openai.OpenAiChatClient
 import com.suarvis.butler.secondary.gateway.impl.AnthropicModelGatewayImpl
 import com.suarvis.butler.secondary.gateway.impl.ModelCatalogGatewayImpl
+import com.suarvis.butler.secondary.gateway.impl.OpenAiCompatibleModelGatewayImpl
+import com.suarvis.butler.secondary.gateway.impl.RoutingModelGatewayImpl
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
 /**
- * Model providers. Only Anthropic exists in this slice; the next slice adds the OpenAI-compatible
- * client and a routing gateway that picks a provider per request.
+ * Model providers: one client per `butler.providers.<id>` entry, chosen by its dialect, behind a
+ * routing gateway. Clients are cheap to build and connect only when a model is called.
  */
 @Configuration(proxyBeanMethods = false)
 class ModelProviderConfig {
     @Bean
-    fun modelCatalogGateway(properties: ModelCatalogProperties): ModelCatalogGateway = ModelCatalogGatewayImpl(properties)
+    fun modelCatalogGateway(
+        models: ModelCatalogProperties,
+        providers: ModelProviderProperties,
+    ): ModelCatalogGateway = ModelCatalogGatewayImpl(models, providers)
 
     @Bean
-    fun anthropicMessagesClient(properties: AnthropicProperties): AnthropicMessagesClient = AnthropicMessagesClient(properties)
-
-    @Bean
-    fun modelGateway(anthropic: AnthropicMessagesClient): ModelGateway = AnthropicModelGatewayImpl(anthropic)
+    fun modelGateway(providers: ModelProviderProperties): ModelGateway =
+        RoutingModelGatewayImpl(
+            providers.providers.entries.associate { (name, endpoint) ->
+                val id = ProviderId(name)
+                id to
+                    when (endpoint.kind) {
+                        ProviderKind.ANTHROPIC -> AnthropicModelGatewayImpl(AnthropicMessagesClient(id, endpoint))
+                        ProviderKind.OPENAI_COMPATIBLE -> OpenAiCompatibleModelGatewayImpl(OpenAiChatClient(id, endpoint))
+                    }
+            },
+        )
 }

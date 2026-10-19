@@ -1,9 +1,11 @@
 package com.suarvis.butler.core.usecase.turn
 
 import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ToolName
 import com.suarvis.butler.core.domain.generic.WorkspaceRoot
 import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelStreamEvent
+import com.suarvis.butler.core.domain.model.TranscriptNormalizer
 import com.suarvis.butler.core.domain.session.Session
 import com.suarvis.butler.core.domain.session.SessionReference
 import com.suarvis.butler.core.domain.turn.SystemPromptComposer
@@ -24,6 +26,10 @@ import java.time.LocalDate
  * The prompt is saved before the model is called, as Clawcode does, so a failed or interrupted
  * call never loses what the user typed. Tool execution and the model ↔ tool loop arrive in the
  * tools slice; until then the model is not offered any tools.
+ *
+ * The model may differ from the one that wrote earlier messages, even its provider: the
+ * transcript is normalized for each request, so a session can switch from Anthropic to an
+ * OpenAI-compatible provider and back.
  */
 class RunTurnUseCase(
     private val getSession: GetSessionUseCase,
@@ -51,17 +57,18 @@ class RunTurnUseCase(
             (existing ?: Session.start(identity.nextSessionId(), command.workspace, null, startedAt))
                 .closeDanglingToolCalls(INTERRUPTED_TOOL_RESULT, startedAt)
 
-        val modelId = command.model ?: session.model ?: catalog.defaultModel()
-        val profile = catalog.resolve(modelId)
-        if (session.model != modelId) session = session.switchModel(modelId, startedAt)
+        // Resolved before anything is saved, so an unknown model never leaves a half-started turn.
+        val profile = catalog.resolve(command.model ?: session.model ?: catalog.defaultModel())
+        // The canonical id is stored, not the alias, as Clawcode does: a session keeps its model when an alias moves on.
+        if (session.model != profile.id) session = session.switchModel(profile.id, startedAt)
 
         session = session.appendUserPrompt(command.prompt, startedAt)
         sessions.save(session)
-        observer.onEvent(TurnEvent.Started(session.id, modelId, newSession = existing == null))
+        observer.onEvent(TurnEvent.Started(session.id, profile.id, newSession = existing == null))
 
         val systemPrompt = SystemPromptComposer.compose(command.workspace, LocalDate.ofInstant(startedAt, clock.zone), profile.id)
         val response =
-            models.stream(ModelRequest(profile, systemPrompt, session.messages)) { event ->
+            models.stream(ModelRequest(profile, systemPrompt, TranscriptNormalizer.normalize(session.messages, OFFERED_TOOLS))) { event ->
                 observer.onEvent(
                     when (event) {
                         is ModelStreamEvent.TextDelta -> TurnEvent.TextDelta(event.text)
@@ -84,6 +91,7 @@ class RunTurnUseCase(
     }
 
     private companion object {
+        val OFFERED_TOOLS = emptySet<ToolName>()
         const val INTERRUPTED_TOOL_RESULT = "Interrupted before this tool call completed"
         const val TOOLS_UNAVAILABLE_RESULT = "Tools are not available in this version of Butler"
     }

@@ -18,12 +18,18 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-/** Domain ↔ Anthropic Messages API wire format. */
+/**
+ * Domain ↔ Anthropic Messages API wire format. The transcript arrives normalized by core
+ * (TranscriptNormalizer), so this only translates shapes.
+ */
 object AnthropicClientMapper {
+    private const val DEFAULT_MAX_TOKENS = 32_000
+
     fun toRequestBody(request: ModelRequest): JsonObject =
         buildJsonObject {
-            put("model", request.model.id.value)
-            put("max_tokens", request.model.maxOutputTokens)
+            put("model", request.model.apiModelName)
+            // Required by the Messages API; models missing from the catalog get a limit current Claude models support.
+            put("max_tokens", request.model.maxOutputTokens ?: DEFAULT_MAX_TOKENS)
             put("stream", true)
             put("system", request.systemPrompt)
             put("messages", JsonArray(toWireMessages(request.messages)))

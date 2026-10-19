@@ -4,6 +4,7 @@ import com.suarvis.butler.core.gateway.IdentityGateway
 import com.suarvis.butler.core.gateway.ModelCatalogGateway
 import com.suarvis.butler.core.gateway.ModelGateway
 import com.suarvis.butler.core.gateway.SessionGateway
+import com.suarvis.butler.core.usecase.model.ResolveModelUseCase
 import com.suarvis.butler.core.usecase.session.DeleteSessionUseCase
 import com.suarvis.butler.core.usecase.session.ForkSessionUseCase
 import com.suarvis.butler.core.usecase.session.GetSessionUseCase
@@ -44,6 +45,9 @@ class UseCaseConfig {
     @Bean
     fun deleteSessionUseCase(getSession: GetSessionUseCase, sessions: SessionGateway) =
         DeleteSessionUseCase(getSession, sessions)
+
+    @Bean
+    fun resolveModelUseCase(catalog: ModelCatalogGateway) = ResolveModelUseCase(catalog)
 
     @Bean
     fun runTurnUseCase(

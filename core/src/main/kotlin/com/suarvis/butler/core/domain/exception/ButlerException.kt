@@ -1,6 +1,7 @@
 package com.suarvis.butler.core.domain.exception
 
-import com.suarvis.butler.core.domain.generic.ProviderKind
+import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.session.SessionReference
 
 /**
@@ -22,6 +23,9 @@ class SessionNotFoundException(val reference: SessionReference) :
  */
 class TranscriptIntegrityException(message: String) : ButlerException(message)
 
+/** No configured provider can serve the requested model, so there is nothing to call. */
+class UnknownModelException(val model: ModelId, reason: String) : ButlerException("Unknown model '$model': $reason")
+
 /** A secondary adaptor could not complete a gateway call (storage, network, ...). */
 class GatewayException(message: String, cause: Throwable? = null) : ButlerException(message, cause)
 
@@ -30,7 +34,7 @@ class GatewayException(message: String, cause: Throwable? = null) : ButlerExcept
  * or switching provider can help, without exposing HTTP details.
  */
 class ModelProviderException(
-    val provider: ProviderKind,
+    val provider: ProviderId,
     val failure: Failure,
     message: String,
     val retryAfterSeconds: Long? = null,
@@ -42,6 +46,9 @@ class ModelProviderException(
         INVALID_REQUEST(false),
         INVALID_RESPONSE(false),
         RATE_LIMITED(true),
+
+        /** The account is out of credit or quota; waiting does not help, switching provider might. */
+        QUOTA_EXHAUSTED(false),
         OVERLOADED(true),
         SERVER_ERROR(true),
         TRANSPORT(true),

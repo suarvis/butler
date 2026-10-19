@@ -4,19 +4,22 @@ import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.exception.ModelProviderException.Failure
 import com.suarvis.butler.core.domain.generic.JsonText
 import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.ProviderKind
 import com.suarvis.butler.core.domain.generic.StopReason
 import com.suarvis.butler.core.domain.generic.TokenUsage
 import com.suarvis.butler.core.domain.generic.ToolCallId
 import com.suarvis.butler.core.domain.generic.ToolName
 import com.suarvis.butler.core.domain.model.ModelProfile
+import com.suarvis.butler.core.domain.model.ModelProvider
 import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelStreamEvent
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.secondary.client.AnthropicStreams
+import com.suarvis.butler.secondary.client.FakeProviderServer
 import com.suarvis.butler.secondary.client.anthropic.AnthropicMessagesClient
-import com.suarvis.butler.secondary.client.anthropic.FakeAnthropicServer
-import com.suarvis.butler.secondary.config.AnthropicProperties
+import com.suarvis.butler.secondary.config.ModelProviderProperties
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
@@ -31,14 +34,17 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 
 class AnthropicModelGatewayImplTest {
-    private val server = FakeAnthropicServer()
-    private val sonnet = ModelProfile(ModelId("claude-sonnet-4-6"), ProviderKind.ANTHROPIC, 2048, null)
+    private val server = FakeProviderServer()
+    private val anthropic = ProviderId("anthropic")
+    private val sonnet = ModelProfile(ModelId("claude-sonnet-4-6"), ModelProvider(anthropic, ProviderKind.ANTHROPIC), 2048, null)
 
     @AfterEach
     fun stop() = server.close()
 
     private fun gateway(apiKey: String = "test-key") =
-        AnthropicModelGatewayImpl(AnthropicMessagesClient(AnthropicProperties(apiKey = apiKey, baseUrl = server.baseUrl)))
+        AnthropicModelGatewayImpl(
+            AnthropicMessagesClient(anthropic, ModelProviderProperties.Endpoint(kind = ProviderKind.ANTHROPIC, apiKey = apiKey, baseUrl = server.baseUrl)),
+        )
 
     private fun request(vararg messages: ConversationMessage) = ModelRequest(sonnet, "You are Butler.", messages.toList())
 
@@ -46,7 +52,7 @@ class AnthropicModelGatewayImplTest {
 
     @Test
     fun `streams text deltas and assembles the answer with usage`() {
-        server.enqueueStream(*FakeAnthropicServer.textAnswer("Hello", " there!"))
+        server.enqueueNamedEvents(*AnthropicStreams.textAnswer("Hello", " there!"))
         val deltas = mutableListOf<ModelStreamEvent>()
 
         val response = gateway().stream(request(ConversationMessage.userText("Say hello"))) { deltas += it }
@@ -59,7 +65,7 @@ class AnthropicModelGatewayImplTest {
 
     @Test
     fun `sends the Messages API request with key, version and model limits`() {
-        server.enqueueStream(*FakeAnthropicServer.textAnswer("ok"))
+        server.enqueueNamedEvents(*AnthropicStreams.textAnswer("ok"))
 
         gateway().stream(request(ConversationMessage.userText("hi"))) { }
 
@@ -76,7 +82,7 @@ class AnthropicModelGatewayImplTest {
 
     @Test
     fun `maps tool calls and results into Anthropic's user and assistant turns`() {
-        server.enqueueStream(*FakeAnthropicServer.textAnswer("done"))
+        server.enqueueNamedEvents(*AnthropicStreams.textAnswer("done"))
         val call = ContentBlock.ToolUse(ToolCallId("toolu_1"), ToolName("read_file"), JsonText("""{"path":"a.txt"}"""))
         val call2 = ContentBlock.ToolUse(ToolCallId("toolu_2"), ToolName("grep_search"), JsonText("""{"pattern":"x"}"""))
 
@@ -102,7 +108,7 @@ class AnthropicModelGatewayImplTest {
 
     @Test
     fun `assembles thinking with its signature and streamed tool input`() {
-        server.enqueueStream(
+        server.enqueueNamedEvents(
             "message_start" to """{"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":1}}}""",
             "content_block_start" to """{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}""",
             "content_block_delta" to """{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me check"}}""",
@@ -137,9 +143,9 @@ class AnthropicModelGatewayImplTest {
 
     @Test
     fun `HTTP errors map to provider failures`() {
-        server.enqueue(FakeAnthropicServer.Scripted(401, """{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"""))
-        server.enqueue(FakeAnthropicServer.Scripted(429, """{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}""", mapOf("retry-after" to "7")))
-        server.enqueue(FakeAnthropicServer.Scripted(529, """{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"""))
+        server.enqueue(FakeProviderServer.Scripted(401, """{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}"""))
+        server.enqueue(FakeProviderServer.Scripted(429, """{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}""", mapOf("retry-after" to "7")))
+        server.enqueue(FakeProviderServer.Scripted(529, """{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"""))
 
         val auth = assertThrows<ModelProviderException> { gateway().stream(request(ConversationMessage.userText("1"))) { } }
         val limited = assertThrows<ModelProviderException> { gateway().stream(request(ConversationMessage.userText("2"))) { } }
@@ -155,7 +161,7 @@ class AnthropicModelGatewayImplTest {
 
     @Test
     fun `an error event in the middle of the stream is a provider failure`() {
-        server.enqueueStream(
+        server.enqueueNamedEvents(
             "message_start" to """{"type":"message_start","message":{"usage":{"input_tokens":3,"output_tokens":1}}}""",
             "error" to """{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}""",
         )
@@ -166,15 +172,23 @@ class AnthropicModelGatewayImplTest {
     }
 
     @Test
-    fun `models of other providers are refused until their adaptor exists`() {
-        val gpt = ModelProfile(ModelId("gpt-4.1"), ProviderKind.OPENAI_COMPATIBLE, 1024, null)
+    fun `sends the provider's model name and a default limit for models missing from the catalog`() {
+        server.enqueueNamedEvents(*AnthropicStreams.textAnswer("ok"))
+        val referenced = ModelProfile(ModelId("anthropic/claude-next"), sonnet.provider, maxOutputTokens = null, pricing = null, apiModelName = "claude-next")
 
-        val error =
-            assertThrows<ModelProviderException> {
-                gateway().stream(ModelRequest(gpt, "s", listOf(ConversationMessage.userText("hi")))) { }
-            }
+        gateway().stream(ModelRequest(referenced, "s", listOf(ConversationMessage.userText("hi")))) { }
 
-        assertEquals(Failure.NOT_CONFIGURED, error.failure)
-        assertEquals(ProviderKind.OPENAI_COMPATIBLE, error.provider)
+        assertEquals("claude-next", lastBody()["model"]!!.jsonPrimitive.content)
+        assertEquals(32_000, lastBody()["max_tokens"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun `an empty credit balance is reported as exhausted quota, not a bad request`() {
+        server.enqueue(FakeProviderServer.Scripted(400, """{"type":"error","error":{"type":"invalid_request_error","message":"Your credit balance is too low to access the Anthropic API."}}"""))
+
+        val error = assertThrows<ModelProviderException> { gateway().stream(request(ConversationMessage.userText("hi"))) { } }
+
+        assertEquals(Failure.QUOTA_EXHAUSTED, error.failure)
+        assertEquals(anthropic, error.provider)
     }
 }

@@ -11,9 +11,9 @@ import com.suarvis.butler.core.domain.exception.DomainValidationException
 import com.suarvis.butler.core.domain.exception.GatewayException
 import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.exception.ModelProviderException.Failure
-import com.suarvis.butler.core.domain.generic.ProviderKind
 import com.suarvis.butler.core.domain.exception.SessionNotFoundException
 import com.suarvis.butler.core.domain.exception.TranscriptIntegrityException
+import com.suarvis.butler.core.domain.exception.UnknownModelException
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 import picocli.CommandLine
@@ -65,20 +65,31 @@ class CliExceptionHandler(
                     "Check the butler.persistence settings (BUTLER_PERSISTENCE_* environment variables).",
                     ExitCodes.RUNTIME,
                 )
+            is UnknownModelException ->
+                CliFailure(
+                    "unknown_model",
+                    error.messageOrName(),
+                    "Use an alias (opus, sonnet, haiku, gpt, grok), a model from butler.models, or provider/model such as ollama/llama3.2.",
+                    ExitCodes.USAGE,
+                )
             is ModelProviderException -> classifyProvider(error)
         }
 
     private fun classifyProvider(error: ModelProviderException): CliFailure {
-        val keyVariable = if (error.provider == ProviderKind.ANTHROPIC) "ANTHROPIC_API_KEY" else "the provider's API key setting"
+        val provider = error.provider.value
+        // application.yml maps every built-in provider's key to <ID>_API_KEY.
+        val keySetting = "${provider.uppercase().replace('-', '_')}_API_KEY (butler.providers.$provider.api-key)"
+        val switchHint = "switch model with --model or /model"
         val (kind, hint) =
             when (error.failure) {
-                Failure.NOT_CONFIGURED -> "missing_credentials" to "Set $keyVariable, or pick another model with --model."
-                Failure.AUTHENTICATION -> "provider_authentication" to "Check that $keyVariable is valid."
+                Failure.NOT_CONFIGURED -> "missing_credentials" to "Set $keySetting, or $switchHint."
+                Failure.AUTHENTICATION -> "provider_authentication" to "Check that $keySetting is valid."
                 Failure.RATE_LIMITED ->
-                    "rate_limited" to (error.retryAfterSeconds?.let { "Retry in ${it}s, or switch model with --model." } ?: "Retry shortly, or switch model with --model.")
-                Failure.OVERLOADED -> "provider_overloaded" to "The provider is overloaded; retry shortly or switch model with --model."
-                Failure.SERVER_ERROR -> "provider_error" to "Retry shortly; the provider reported an internal error."
-                Failure.TRANSPORT -> "provider_unreachable" to "Check your network connection and the provider base URL."
+                    "rate_limited" to (error.retryAfterSeconds?.let { "Retry in ${it}s, or $switchHint." } ?: "Retry shortly, or $switchHint.")
+                Failure.QUOTA_EXHAUSTED -> "provider_quota_exhausted" to "Add credit with $provider, or $switchHint."
+                Failure.OVERLOADED -> "provider_overloaded" to "$provider is overloaded; retry shortly or $switchHint."
+                Failure.SERVER_ERROR -> "provider_error" to "Retry shortly; $provider reported an internal error."
+                Failure.TRANSPORT -> "provider_unreachable" to "Check your network connection and butler.providers.$provider.base-url."
                 Failure.INVALID_REQUEST -> "provider_invalid_request" to "Re-run with BUTLER_LOG_LEVEL=DEBUG for details."
                 Failure.INVALID_RESPONSE -> "provider_invalid_response" to "Re-run with BUTLER_LOG_LEVEL=DEBUG for details."
             }

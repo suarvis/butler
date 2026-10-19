@@ -1,4 +1,4 @@
-package com.suarvis.butler.secondary.client.anthropic.support
+package com.suarvis.butler.secondary.client.support
 
 /** One Server-Sent Event: the optional `event:` name and the joined `data:` lines. */
 data class SseEvent(val event: String?, val data: String)

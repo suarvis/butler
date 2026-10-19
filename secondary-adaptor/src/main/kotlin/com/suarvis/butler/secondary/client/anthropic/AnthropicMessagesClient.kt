@@ -2,21 +2,18 @@ package com.suarvis.butler.secondary.client.anthropic
 
 import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.exception.ModelProviderException.Failure
-import com.suarvis.butler.core.domain.generic.ProviderKind
-import com.suarvis.butler.secondary.client.anthropic.support.SseEvent
-import com.suarvis.butler.secondary.client.anthropic.support.SseParser
-import com.suarvis.butler.secondary.config.AnthropicProperties
+import com.suarvis.butler.core.domain.generic.ProviderId
+import com.suarvis.butler.secondary.client.support.EventStreamHttpClient
+import com.suarvis.butler.secondary.client.support.HttpErrorResponse
+import com.suarvis.butler.secondary.client.support.SseEvent
+import com.suarvis.butler.secondary.config.ModelProviderProperties
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
-import java.io.IOException
-import java.io.UncheckedIOException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.util.stream.Collectors
 
 /**
  * HTTP client for the Anthropic Messages API (streaming). Uses the JDK HTTP client and parses
@@ -24,58 +21,44 @@ import java.util.stream.Collectors
  * keeps transcript conversion (tool results, thinking signatures) fully under our control.
  */
 class AnthropicMessagesClient(
-    private val properties: AnthropicProperties,
+    val provider: ProviderId,
+    private val endpoint: ModelProviderProperties.Endpoint,
     httpClient: HttpClient? = null,
 ) {
-    // Built on first use: every CLI invocation constructs this client, most never call a model.
-    private val http: HttpClient by lazy { httpClient ?: HttpClient.newBuilder().connectTimeout(properties.connectTimeout).build() }
+    private val http = EventStreamHttpClient(provider, endpoint.connectTimeout, httpClient)
 
     fun stream(body: JsonObject, onEvent: (SseEvent) -> Unit) {
-        if (properties.apiKey.isBlank()) {
-            throw failure(Failure.NOT_CONFIGURED, "No Anthropic API key: set ANTHROPIC_API_KEY (or butler.providers.anthropic.api-key)")
+        if (endpoint.apiKey.isBlank()) {
+            throw failure(Failure.NOT_CONFIGURED, "No API key configured for provider '$provider'")
+        }
+        if (endpoint.baseUrl.isBlank()) {
+            throw failure(Failure.NOT_CONFIGURED, "No base URL configured for provider '$provider'")
         }
         val request =
-            HttpRequest.newBuilder(URI.create(properties.baseUrl.trimEnd('/') + MESSAGES_PATH))
-                .timeout(properties.requestTimeout)
-                .header("x-api-key", properties.apiKey)
-                .header("anthropic-version", properties.apiVersion)
+            HttpRequest.newBuilder(URI.create(endpoint.baseUrl.trimEnd('/') + MESSAGES_PATH))
+                .timeout(endpoint.requestTimeout)
+                .header("x-api-key", endpoint.apiKey)
+                .header("anthropic-version", endpoint.apiVersion)
                 .header("content-type", "application/json")
                 .header("accept", "text/event-stream")
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .build()
-        val response =
-            try {
-                http.send(request, HttpResponse.BodyHandlers.ofLines())
-            } catch (error: IOException) {
-                throw failure(Failure.TRANSPORT, "Could not reach ${properties.baseUrl}: ${error.message}", cause = error)
-            } catch (error: InterruptedException) {
-                Thread.currentThread().interrupt()
-                throw failure(Failure.TRANSPORT, "Interrupted while calling Anthropic", cause = error)
-            }
-        response.body().use { lines ->
-            if (response.statusCode() !in 200..299) {
-                val text = lines.collect(Collectors.joining("\n"))
-                throw httpFailure(response.statusCode(), text, response.headers().firstValue("retry-after").orElse(null))
-            }
-            try {
-                SseParser.parse(lines.iterator(), onEvent)
-            } catch (error: UncheckedIOException) {
-                throw failure(Failure.TRANSPORT, "Connection to Anthropic broke mid-response: ${error.message}", cause = error)
-            }
-        }
+        http.send(request, ::httpFailure, onEvent)
     }
 
-    private fun httpFailure(status: Int, body: String, retryAfter: String?): ModelProviderException {
-        val reason = errorMessage(body) ?: "HTTP $status"
+    private fun httpFailure(error: HttpErrorResponse): ModelProviderException {
+        val reason = errorMessage(error.body) ?: "HTTP ${error.status}"
         val kind =
-            when (status) {
-                401, 403 -> Failure.AUTHENTICATION
-                429 -> Failure.RATE_LIMITED
-                529, 503 -> Failure.OVERLOADED
-                in 400..499 -> Failure.INVALID_REQUEST
+            when {
+                error.status == 401 || error.status == 403 -> Failure.AUTHENTICATION
+                error.status == 429 -> Failure.RATE_LIMITED
+                error.status == 529 || error.status == 503 -> Failure.OVERLOADED
+                // Anthropic reports an empty prepaid balance as a 400 with this wording.
+                error.status == 400 && reason.contains("credit balance", ignoreCase = true) -> Failure.QUOTA_EXHAUSTED
+                error.status in 400..499 -> Failure.INVALID_REQUEST
                 else -> Failure.SERVER_ERROR
             }
-        return failure(kind, "Anthropic API error ($status): $reason", retryAfterSeconds = retryAfter?.trim()?.toLongOrNull())
+        return failure(kind, "Anthropic API error (${error.status}): $reason", error.retryAfterSeconds)
     }
 
     /** Error bodies look like {"type":"error","error":{"type":"...","message":"..."}}. */
@@ -89,8 +72,7 @@ class AnthropicMessagesClient(
         kind: Failure,
         message: String,
         retryAfterSeconds: Long? = null,
-        cause: Throwable? = null,
-    ) = ModelProviderException(ProviderKind.ANTHROPIC, kind, message, retryAfterSeconds, cause)
+    ) = ModelProviderException(provider, kind, message, retryAfterSeconds)
 
     private companion object {
         const val MESSAGES_PATH = "/v1/messages"

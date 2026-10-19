@@ -16,7 +16,7 @@ object TurnCliMapper {
         return PromptResultOutput(
             message = summary.finalText,
             model = summary.model.id.value,
-            provider = summary.model.provider.name.lowercase(),
+            provider = summary.model.provider.id.value,
             sessionId = summary.session.id.value,
             iterations = summary.iterations,
             toolUses = summary.assistantMessages.flatMap { it.toolUses }.map { ToolUseOutput(it.id.value, it.name.value, it.input.value) },

@@ -18,14 +18,19 @@ butler:
       # Set BUTLER_PERSISTENCE_POSTGRESQL_PASSWORD; there is deliberately no default.
       password: ""
 
-  # Model catalog: aliases (as in Clawcode), output limits and USD prices per million tokens.
-  # Prices are estimates for display and budgets; check your provider's pricing page.
+  # Model catalog: aliases (as in Clawcode), which provider serves a model, output limits and USD
+  # prices per million tokens. Prices are estimates for display and budgets; check each provider's
+  # pricing page. Ids containing dots must be written as "[id]" so Spring keeps them as one key.
+  # Models missing here still work when a provider's model-prefixes claim them, or as provider/model
+  # (for example ollama/llama3.2 or openrouter/qwen/qwen3-coder).
   models:
     default: sonnet
     aliases:
       opus: claude-opus-4-7
       sonnet: claude-sonnet-4-6
       haiku: claude-haiku-4-5
+      gpt: gpt-5.5
+      grok: grok-4.7
     profiles:
       claude-opus-4-7:
         provider: anthropic
@@ -39,9 +44,43 @@ butler:
         provider: anthropic
         max-output-tokens: 64000
         pricing: { input: 1.00, output: 5.00, cache-write: 1.25, cache-read: 0.10 }
+      "[gpt-5.5]":
+        provider: openai
+        max-output-tokens: 128000
+        pricing: { input: 5.00, output: 30.00, cache-read: 0.50 }
+      "[gpt-6.1-sol]":
+        provider: openai
+        max-output-tokens: 128000
+        pricing: { input: 2.00, output: 10.00, cache-write: 2.50, cache-read: 0.10 }
+      "[grok-4.7]":
+        provider: xai
+        pricing: { input: 2.00, output: 6.00, cache-read: 0.50 }
 
-  # Bring your own key: read from the environment, never stored by Butler.
+  # Providers, by id. Bring your own key: keys are read from the environment and never stored by
+  # Butler. kind is the API dialect: anthropic, or openai-compatible (Chat Completions). Any other
+  # OpenAI-compatible server (vLLM, LM Studio, a company gateway) is one more entry here.
   providers:
     anthropic:
+      kind: anthropic
       api-key: ${ANTHROPIC_API_KEY:}
       base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
+      model-prefixes: [claude]
+    openai:
+      kind: openai-compatible
+      api-key: ${OPENAI_API_KEY:}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      max-tokens-parameter: max_completion_tokens
+      model-prefixes: [gpt-, chatgpt-, o1, o3, o4]
+    xai:
+      kind: openai-compatible
+      api-key: ${XAI_API_KEY:}
+      base-url: ${XAI_BASE_URL:https://api.x.ai/v1}
+      model-prefixes: [grok]
+    openrouter:
+      kind: openai-compatible
+      api-key: ${OPENROUTER_API_KEY:}
+      base-url: ${OPENROUTER_BASE_URL:https://openrouter.ai/api/v1}
+    ollama:
+      kind: openai-compatible
+      api-key-required: false
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434/v1}

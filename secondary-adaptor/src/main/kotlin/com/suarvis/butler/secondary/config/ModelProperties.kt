@@ -15,8 +15,13 @@ data class ModelCatalogProperties(
     val aliases: Map<String, String> = emptyMap(),
     val profiles: Map<String, Profile> = emptyMap(),
 ) {
+    /**
+     * @param provider id of the entry under `butler.providers` that serves this model.
+     * @param apiModel name sent to the provider when it differs from the catalog id.
+     */
     data class Profile(
-        val provider: ProviderKind? = null,
+        val provider: String? = null,
+        val apiModel: String? = null,
         val maxOutputTokens: Int? = null,
         val pricing: Pricing? = null,
     )
@@ -31,14 +36,34 @@ data class ModelCatalogProperties(
 }
 
 /**
- * `butler.providers.anthropic.*`. The API key is the user's own (BYOK); it defaults to the
- * ANTHROPIC_API_KEY environment variable in application.yml and is never stored by Butler.
+ * `butler.providers.<id>.*`: the providers Butler can call. Bring your own key: each key is the
+ * user's own, read from the environment in application.yml and never stored by Butler. Adding a
+ * provider is configuration only, as long as it speaks a known dialect ([ProviderKind]).
  */
-@ConfigurationProperties(prefix = "butler.providers.anthropic")
-data class AnthropicProperties(
-    val apiKey: String = "",
-    val baseUrl: String = "https://api.anthropic.com",
-    val apiVersion: String = "2023-06-01",
-    val connectTimeout: Duration = Duration.ofSeconds(30),
-    val requestTimeout: Duration = Duration.ofMinutes(10),
-)
+@ConfigurationProperties(prefix = "butler")
+data class ModelProviderProperties(
+    val providers: Map<String, Endpoint> = emptyMap(),
+) {
+    /**
+     * @param modelPrefixes model ids this provider serves when they are not in the catalog,
+     *   e.g. `gpt-` for OpenAI; the longest matching prefix across providers wins.
+     * @param apiKeyRequired false for local servers such as Ollama that accept any or no key.
+     * @param apiVersion Anthropic only: the `anthropic-version` header.
+     * @param maxTokensParameter OpenAI-compatible only: OpenAI wants `max_completion_tokens`,
+     *   while many compatible servers only understand the older `max_tokens`.
+     * @param streamUsage OpenAI-compatible only: ask for token usage at the end of the stream;
+     *   turn off for servers that reject `stream_options`.
+     */
+    data class Endpoint(
+        val kind: ProviderKind = ProviderKind.OPENAI_COMPATIBLE,
+        val baseUrl: String = "",
+        val apiKey: String = "",
+        val apiKeyRequired: Boolean = true,
+        val modelPrefixes: List<String> = emptyList(),
+        val apiVersion: String = "2023-06-01",
+        val maxTokensParameter: String = "max_tokens",
+        val streamUsage: Boolean = true,
+        val connectTimeout: Duration = Duration.ofSeconds(30),
+        val requestTimeout: Duration = Duration.ofMinutes(10),
+    )
+}

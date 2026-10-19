@@ -42,6 +42,13 @@ class ValueObjectsTest {
     }
 
     @Test
+    fun `provider ids are lower case so they work as model prefixes`() {
+        assertEquals("open-router_2", ProviderId("open-router_2").value)
+        assertThrows<DomainValidationException> { ProviderId("OpenAI") }
+        assertThrows<DomainValidationException> { ProviderId("ollama/local") }
+    }
+
+    @Test
     fun `workspace root must be absolute and is normalised by the factory`() {
         assertEquals(Path.of("/work/demo"), WorkspaceRoot.of(Path.of("/work/./other/../demo")).path)
         assertThrows<DomainValidationException> { WorkspaceRoot.of(Path.of("relative/dir")) }

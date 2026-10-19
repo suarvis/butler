@@ -34,6 +34,15 @@ services:
       BUTLER_PERSISTENCE_POSTGRESQL_URL: jdbc:postgresql://postgres:5432/butler
       BUTLER_PERSISTENCE_POSTGRESQL_USERNAME: butler
       BUTLER_PERSISTENCE_POSTGRESQL_PASSWORD: ${BUTLER_DB_PASSWORD:-butler-local}
+      # Provider keys pass through from your shell; unset ones stay empty.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Ollama runs on the host, not in this network.
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ${BUTLER_WORKSPACE:-.}:/workspace
     working_dir: /workspace

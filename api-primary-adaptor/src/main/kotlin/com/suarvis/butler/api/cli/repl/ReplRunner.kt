@@ -11,7 +11,9 @@ import com.suarvis.butler.api.cli.exception.CliExceptionHandler
 import com.suarvis.butler.core.domain.generic.BranchName
 import com.suarvis.butler.core.domain.generic.ModelId
 import com.suarvis.butler.core.domain.generic.PageRequest
+import com.suarvis.butler.core.domain.model.ModelProfile
 import com.suarvis.butler.core.domain.session.SessionReference
+import com.suarvis.butler.core.usecase.model.ResolveModelUseCase
 import org.springframework.stereotype.Component
 
 /**
@@ -23,6 +25,7 @@ import org.springframework.stereotype.Component
 class ReplRunner(
     private val prompts: PromptActions,
     private val sessions: SessionActions,
+    private val resolveModel: ResolveModelUseCase,
     private val exceptions: CliExceptionHandler,
     private val console: CliConsole,
 ) {
@@ -73,15 +76,7 @@ class ReplRunner(
                     state.session = null
                     say(state, "Started a fresh session; the next prompt opens it.")
                 }
-                is SlashCommand.Model -> {
-                    val name = command.name
-                    if (name == null) {
-                        say(state, "Model: ${invocation.model ?: "default (or the session's model)"}")
-                    } else {
-                        state.invocation = invocation.copy(model = ModelId(name))
-                        say(state, "Model set to $name for the next prompts.")
-                    }
-                }
+                is SlashCommand.Model -> model(state, command.name)
                 SlashCommand.Status -> sessions.status(invocation, state.session?.let { sessions.load(invocation, it) })
                 is SlashCommand.Export -> sessions.export(invocation, sessions.load(invocation, current(state)), command.path)
                 SlashCommand.SessionList -> sessions.list(invocation, PageRequest.firstPage())
@@ -99,6 +94,32 @@ class ReplRunner(
         }
         return true
     }
+
+    /**
+     * `/model` shows the model the next prompt will use; `/model NAME` checks NAME and switches to
+     * it, even to another provider: the next turn sends the whole conversation to the new model.
+     */
+    private fun model(state: State, name: String?) {
+        if (name == null) {
+            val current = currentModel(state)
+            say(state, "Model: ${current.id} (${current.provider.id})")
+            return
+        }
+        val target = resolveModel.execute(ModelId(name))
+        // A session may name a model that is no longer configured; that must not block switching away from it.
+        val previous = runCatching { currentModel(state) }.getOrNull()
+        state.invocation = state.invocation.copy(model = target.id)
+        val providerChange =
+            if (previous != null && previous.provider.id != target.provider.id) {
+                " Switching provider ${previous.provider.id} → ${target.provider.id}; the conversation so far goes along."
+            } else {
+                ""
+            }
+        say(state, "Model set to ${target.id} (${target.provider.id}) for the next prompts.$providerChange")
+    }
+
+    private fun currentModel(state: State): ModelProfile =
+        resolveModel.execute(state.invocation.model ?: state.session?.let { sessions.load(state.invocation, it).model })
 
     /** The open session, or the latest one when no prompt has been sent yet. */
     private fun current(state: State): SessionReference = state.session ?: SessionReference.Latest

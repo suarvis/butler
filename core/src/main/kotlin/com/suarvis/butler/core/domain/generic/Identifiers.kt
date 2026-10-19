@@ -62,3 +62,21 @@ value class ModelId(val value: String) {
         const val MAX_LENGTH = 200
     }
 }
+
+/**
+ * A configured model provider, e.g. `anthropic`, `openai`, `xai`, `ollama`. It names who serves a
+ * request: whose API key is used and, later, whose budget and rate limits apply. Lower case
+ * because it is also the prefix in `provider/model` references such as `ollama/llama3.2`.
+ */
+@JvmInline
+value class ProviderId(val value: String) {
+    init {
+        ensure(PATTERN.matches(value)) { "Invalid provider id '$value': use 1-64 lower-case letters, digits, '_' or '-'" }
+    }
+
+    override fun toString(): String = value
+
+    private companion object {
+        val PATTERN = Regex("[a-z0-9][a-z0-9_-]{0,63}")
+    }
+}

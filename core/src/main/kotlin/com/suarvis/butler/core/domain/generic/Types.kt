@@ -8,7 +8,10 @@ enum class MessageRole {
     TOOL,
 }
 
-/** Wire protocol family of a model provider. OpenAI-compatible covers OpenAI, xAI, OpenRouter, Ollama, ... */
+/**
+ * The API dialect a provider speaks. Several providers share a dialect: OpenAI-compatible (Chat
+ * Completions) covers OpenAI, xAI, OpenRouter, Ollama and most local servers.
+ */
 enum class ProviderKind {
     ANTHROPIC,
     OPENAI_COMPATIBLE,

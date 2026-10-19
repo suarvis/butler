@@ -3,6 +3,7 @@ package com.suarvis.butler.secondary.client.anthropic.support
 import com.suarvis.butler.secondary.client.anthropic.dto.AnthropicBlock
 import com.suarvis.butler.secondary.client.anthropic.dto.AnthropicMessage
 import com.suarvis.butler.secondary.client.anthropic.dto.AnthropicUsage
+import com.suarvis.butler.secondary.client.support.SseEvent
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive

@@ -1,12 +1,15 @@
 package com.suarvis.butler.core.fixtures
 
 import com.suarvis.butler.core.domain.exception.ModelProviderException
+import com.suarvis.butler.core.domain.exception.UnknownModelException
 import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.ProviderKind
 import com.suarvis.butler.core.domain.generic.StopReason
 import com.suarvis.butler.core.domain.generic.TokenUsage
 import com.suarvis.butler.core.domain.model.ModelPricing
 import com.suarvis.butler.core.domain.model.ModelProfile
+import com.suarvis.butler.core.domain.model.ModelProvider
 import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelResponse
 import com.suarvis.butler.core.domain.model.ModelStreamEvent
@@ -43,17 +46,29 @@ class ScriptedModelGateway(vararg replies: Reply) : ModelGateway {
     }
 }
 
-/** Catalog with Clawcode's Anthropic aliases and simple pricing. */
+/**
+ * Catalog with Clawcode's Anthropic aliases, `gpt-*` models served by OpenAI and `ollama/...`
+ * references served by a local Ollama. Anything else is unknown.
+ */
 class FixedModelCatalog(private val default: ModelId = ModelId("sonnet")) : ModelCatalogGateway {
     private val aliases = mapOf("sonnet" to "claude-sonnet-4-6", "opus" to "claude-opus-4-7", "haiku" to "claude-haiku-4-5")
 
     override fun defaultModel(): ModelId = default
 
-    override fun resolve(model: ModelId): ModelProfile =
-        ModelProfile(
-            id = ModelId(aliases[model.value] ?: model.value),
-            provider = ProviderKind.ANTHROPIC,
-            maxOutputTokens = 1024,
-            pricing = ModelPricing(BigDecimal("3"), BigDecimal("15"), BigDecimal("3.75"), BigDecimal("0.30")),
-        )
+    override fun resolve(model: ModelId): ModelProfile {
+        val id = aliases[model.value] ?: model.value
+        return when {
+            id.startsWith("claude") -> ModelProfile(ModelId(id), ANTHROPIC, maxOutputTokens = 1024, pricing = PRICING)
+            id.startsWith("gpt-") -> ModelProfile(ModelId(id), OPENAI, maxOutputTokens = null, pricing = PRICING)
+            id.startsWith("ollama/") -> ModelProfile(ModelId(id), OLLAMA, maxOutputTokens = null, pricing = null, apiModelName = id.removePrefix("ollama/"))
+            else -> throw UnknownModelException(ModelId(id), "not in the test catalog")
+        }
+    }
+
+    companion object {
+        val ANTHROPIC = ModelProvider(ProviderId("anthropic"), ProviderKind.ANTHROPIC)
+        val OPENAI = ModelProvider(ProviderId("openai"), ProviderKind.OPENAI_COMPATIBLE)
+        val OLLAMA = ModelProvider(ProviderId("ollama"), ProviderKind.OPENAI_COMPATIBLE)
+        private val PRICING = ModelPricing(BigDecimal("3"), BigDecimal("15"), BigDecimal("3.75"), BigDecimal("0.30"))
+    }
 }

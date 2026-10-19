@@ -22,10 +22,12 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.io.path.listDirectoryEntries
+import kotlin.io.path.readText
 
 /**
- * Runs `butler` end to end against a local fake of the Anthropic Messages API, so prompts,
- * streaming, the REPL and error reporting are exercised without network access or API cost.
+ * Runs `butler` end to end against local fakes of the Anthropic Messages API and an
+ * OpenAI-compatible Chat Completions API, so prompts, streaming, the REPL, switching provider and
+ * error reporting are exercised without network access or API cost.
  */
 class PromptEndToEndTest {
     @TempDir
@@ -33,6 +35,7 @@ class PromptEndToEndTest {
 
     private lateinit var workspace: Path
     private val anthropic = FakeAnthropic()
+    private val openai = FakeOpenAi()
 
     data class CliRun(val exitCode: Int, val stdout: String, val stderr: String) {
         fun json(): JsonObject = Json.parseToJsonElement(stdout.trim().lines().last()).jsonObject
@@ -43,13 +46,17 @@ class PromptEndToEndTest {
         workspace = root.resolve("project").also { Files.createDirectories(it) }
         System.setProperty(BASE_URL_PROPERTY, anthropic.baseUrl)
         System.setProperty(API_KEY_PROPERTY, "test-key")
+        System.setProperty(OPENAI_BASE_URL_PROPERTY, openai.baseUrl)
+        System.setProperty(OPENAI_API_KEY_PROPERTY, "sk-test")
+        System.setProperty(OLLAMA_BASE_URL_PROPERTY, openai.baseUrl)
     }
 
     @AfterEach
     fun tearDown() {
         anthropic.close()
-        System.clearProperty(BASE_URL_PROPERTY)
-        System.clearProperty(API_KEY_PROPERTY)
+        openai.close()
+        listOf(BASE_URL_PROPERTY, API_KEY_PROPERTY, OPENAI_BASE_URL_PROPERTY, OPENAI_API_KEY_PROPERTY, OLLAMA_BASE_URL_PROPERTY)
+            .forEach(System::clearProperty)
     }
 
     private fun butler(vararg args: String, stdin: String = ""): CliRun {
@@ -71,6 +78,10 @@ class PromptEndToEndTest {
     }
 
     private fun lastRequest(): JsonObject = Json.parseToJsonElement(anthropic.requests.last()).jsonObject
+
+    private fun lastOpenAiRequest(): JsonObject = Json.parseToJsonElement(openai.requests.last().body).jsonObject
+
+    private fun savedSessionText(): String = workspace.resolve(".butler/sessions").listDirectoryEntries("*.jsonl").single().readText()
 
     @Test
     fun `a one-shot prompt returns Clawcode's JSON result and saves the session`() {
@@ -187,6 +198,71 @@ class PromptEndToEndTest {
         assertEquals(3, lastRequest()["messages"]!!.jsonArray.size)
     }
 
+    @Test
+    fun `slash model switches provider mid-session and the new provider gets the whole conversation`() {
+        anthropic.answer("Hello from Claude")
+        openai.answer("Hello from GPT")
+
+        val run = butler(stdin = "Say hello\n/model gpt\nAnd again\n")
+
+        assertEquals(ExitCodes.OK, run.exitCode, run.stderr)
+        assertTrue(run.stdout.contains("Switching provider anthropic → openai"), run.stdout)
+        assertTrue(run.stdout.contains("Hello from GPT"), run.stdout)
+        assertEquals(1, anthropic.requests.size)
+        val request = lastOpenAiRequest()
+        assertEquals("gpt-5.5", request["model"]!!.jsonPrimitive.content)
+        assertEquals(128_000, request["max_completion_tokens"]!!.jsonPrimitive.int)
+        val messages = request["messages"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("system", "user", "assistant", "user"), messages.map { it["role"]!!.jsonPrimitive.content })
+        assertEquals(listOf("Say hello", "Hello from Claude", "And again"), messages.drop(1).map { it["content"]!!.jsonPrimitive.content })
+        assertTrue(savedSessionText().contains("\"model\":\"gpt-5.5\""))
+    }
+
+    @Test
+    fun `a provider-slash-model reference reaches a local server without a key`() {
+        openai.answer("local answer")
+
+        val run = butler("--output-format", "json", "--model", "ollama/llama3.2", "prompt", "hi")
+
+        assertEquals(ExitCodes.OK, run.exitCode, run.stderr)
+        assertEquals("ollama", run.json()["provider"]!!.jsonPrimitive.content)
+        assertEquals("ollama/llama3.2", run.json()["model"]!!.jsonPrimitive.content)
+        assertEquals("llama3.2", lastOpenAiRequest()["model"]!!.jsonPrimitive.content)
+        assertEquals(null, openai.requests.last().authorization)
+    }
+
+    @Test
+    fun `a missing OpenAI key names that provider's variable`() {
+        System.setProperty(OPENAI_API_KEY_PROPERTY, "")
+
+        val run = butler("--output-format", "json", "--model", "gpt-5.5", "prompt", "hi")
+
+        assertEquals(ExitCodes.RUNTIME, run.exitCode)
+        assertEquals("missing_credentials", run.json()["kind"]!!.jsonPrimitive.content)
+        assertTrue(run.json()["hint"]!!.jsonPrimitive.content.contains("OPENAI_API_KEY"), run.stdout)
+    }
+
+    @Test
+    fun `an unknown model is a usage error and nothing is saved`() {
+        val run = butler("--output-format", "json", "--model", "mystery-model", "prompt", "hi")
+
+        assertEquals(ExitCodes.USAGE, run.exitCode)
+        assertEquals("unknown_model", run.json()["kind"]!!.jsonPrimitive.content)
+        assertTrue(Files.notExists(workspace.resolve(".butler/sessions")) || workspace.resolve(".butler/sessions").listDirectoryEntries().isEmpty())
+    }
+
+    @Test
+    fun `slash model rejects an unknown model and keeps the current one`() {
+        anthropic.answer("still Claude")
+
+        val run = butler(stdin = "/model mystery-model\nhi\n")
+
+        assertEquals(ExitCodes.OK, run.exitCode, run.stderr)
+        assertTrue(run.stderr.contains("[error-kind: unknown_model]"), run.stderr)
+        assertTrue(run.stdout.contains("still Claude"), run.stdout)
+        assertTrue(openai.requests.isEmpty())
+    }
+
     /** Minimal fake of POST /v1/messages that streams scripted answers. */
     private class FakeAnthropic : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -226,8 +302,49 @@ class PromptEndToEndTest {
         override fun close() = server.stop(0)
     }
 
+    /** Minimal fake of POST /chat/completions (OpenAI-compatible) that streams scripted answers. */
+    private class FakeOpenAi : AutoCloseable {
+        data class Recorded(val body: String, val authorization: String?)
+
+        private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        private val replies = ConcurrentLinkedQueue<String>()
+        val requests = ConcurrentLinkedQueue<Recorded>()
+
+        val baseUrl: String
+            get() = "http://127.0.0.1:${server.address.port}/v1"
+
+        init {
+            server.createContext("/v1/chat/completions") { exchange ->
+                requests += Recorded(exchange.requestBody.readAllBytes().toString(Charsets.UTF_8), exchange.requestHeaders.getFirst("Authorization"))
+                val reply = replies.poll()
+                val (status, body) = if (reply == null) 500 to """{"error":{"message":"no scripted reply"}}""" else 200 to reply
+                val bytes = body.toByteArray(Charsets.UTF_8)
+                exchange.sendResponseHeaders(status, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }
+            server.start()
+        }
+
+        fun answer(text: String): FakeOpenAi =
+            apply {
+                val chunks =
+                    listOf(
+                        """{"choices":[{"index":0,"delta":{"role":"assistant","content":"$text"},"finish_reason":null}]}""",
+                        """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+                        """{"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4}}""",
+                        "[DONE]",
+                    )
+                replies += chunks.joinToString(separator = "") { "data: $it\n\n" }
+            }
+
+        override fun close() = server.stop(0)
+    }
+
     private companion object {
         const val BASE_URL_PROPERTY = "butler.providers.anthropic.base-url"
         const val API_KEY_PROPERTY = "butler.providers.anthropic.api-key"
+        const val OPENAI_BASE_URL_PROPERTY = "butler.providers.openai.base-url"
+        const val OPENAI_API_KEY_PROPERTY = "butler.providers.openai.api-key"
+        const val OLLAMA_BASE_URL_PROPERTY = "butler.providers.ollama.base-url"
     }
 }
