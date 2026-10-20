@@ -1,6 +1,7 @@
 package com.suarvis.butler.core.gateway
 
 import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.model.ModelProfile
 import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelResponse
@@ -26,4 +27,10 @@ interface ModelCatalogGateway {
      * @throws com.suarvis.butler.core.domain.exception.UnknownModelException when no configured provider serves the model.
      */
     fun resolve(model: ModelId): ModelProfile
+
+    /** Models to offer, in the user's order of preference, when the chosen one is over budget or unavailable. */
+    fun fallbacks(): List<ModelId>
+
+    /** Whether Butler can call [provider]: it is configured and has an API key, or needs none. */
+    fun isConfigured(provider: ProviderId): Boolean
 }

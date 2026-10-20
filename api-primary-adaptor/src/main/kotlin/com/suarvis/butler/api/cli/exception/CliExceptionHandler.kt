@@ -6,6 +6,7 @@ import com.suarvis.butler.api.cli.OutputFormat
 import com.suarvis.butler.api.cli.dto.ErrorOutput
 import com.suarvis.butler.api.cli.render.CliOutputWriter
 import com.suarvis.butler.api.security.authorization.AuthorizationDeniedException
+import com.suarvis.butler.core.domain.exception.BudgetExceededException
 import com.suarvis.butler.core.domain.exception.ButlerException
 import com.suarvis.butler.core.domain.exception.DomainValidationException
 import com.suarvis.butler.core.domain.exception.GatewayException
@@ -63,6 +64,13 @@ class CliExceptionHandler(
                     "persistence_error",
                     error.messageOrName(),
                     "Check the butler.persistence settings (BUTLER_PERSISTENCE_* environment variables).",
+                    ExitCodes.RUNTIME,
+                )
+            is BudgetExceededException ->
+                CliFailure(
+                    "budget_exceeded",
+                    error.messageOrName(),
+                    "Raise the limit under butler.budgets, pass --allow-over-budget, or switch model with --model or /model. See `butler usage`.",
                     ExitCodes.RUNTIME,
                 )
             is UnknownModelException ->

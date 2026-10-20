@@ -31,6 +31,7 @@ import java.util.concurrent.Callable
     subcommands = [
         PromptCommand::class,
         StatusCommand::class,
+        UsageCommand::class,
         SessionCommand::class,
         ExportCommand::class,
         VersionCommand::class,
@@ -41,6 +42,8 @@ import java.util.concurrent.Callable
         "Examples:",
         "  butler \"explain the build setup\"",
         "  butler --model opus prompt \"review this design\"",
+        "  butler --model ollama/qwen3-coder \"explain this function\"",
+        "  butler usage",
         "  git diff | butler prompt --stdin \"write a commit message\"",
         "  butler --resume latest",
         "  butler session list",

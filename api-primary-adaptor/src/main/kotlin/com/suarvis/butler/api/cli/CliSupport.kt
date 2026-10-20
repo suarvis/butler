@@ -1,6 +1,7 @@
 package com.suarvis.butler.api.cli
 
 import org.springframework.stereotype.Component
+import java.io.BufferedReader
 import java.io.InputStream
 import java.io.PrintStream
 import java.nio.file.Files
@@ -55,6 +56,12 @@ interface CliConsole {
 
     /** True when a person is typing at a terminal, false when input is piped or redirected. */
     val interactive: Boolean
+
+    /**
+     * The next line of input, or null at the end. The REPL and approval prompts both read through
+     * this, so neither swallows input buffered for the other.
+     */
+    fun readLine(): String?
 }
 
 @Component
@@ -67,6 +74,16 @@ class SystemCliConsole : CliConsole {
 
     override val err: PrintStream
         get() = System.err
+
+    private var reader: Pair<InputStream, BufferedReader>? = null
+
+    @Synchronized
+    override fun readLine(): String? {
+        // Keyed by the stream so a redirected System.in (tests run several CLIs per JVM) gets a fresh reader.
+        val current = System.`in`
+        val cached = reader?.takeIf { it.first === current } ?: (current to current.bufferedReader()).also { reader = it }
+        return cached.second.readLine()
+    }
 
     // JDK 22+ returns a Console even when redirected, so ask it whether it is a terminal when possible.
     override val interactive: Boolean

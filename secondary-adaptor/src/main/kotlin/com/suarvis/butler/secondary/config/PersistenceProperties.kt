@@ -15,8 +15,14 @@ data class PersistenceProperties(
 ) {
     enum class Store { FILE, POSTGRESQL }
 
-    /** Sessions live under `<workspace>/<directory>`; Clawcode used `.claw/sessions`. */
-    data class File(val directory: String = ".butler/sessions")
+    /**
+     * Sessions live under `<workspace>/<directory>`; Clawcode used `.claw/sessions`. What spans
+     * workspaces (the usage ledger, rate-limit cooldowns) lives in [userDirectory].
+     */
+    data class File(
+        val directory: String = ".butler/sessions",
+        val userDirectory: String = System.getProperty("user.home") + "/.butler",
+    )
 
     data class Postgresql(
         val url: String = "jdbc:postgresql://localhost:5432/butler",

@@ -16,7 +16,11 @@ class GlobalOptions {
     )
     var outputFormat: OutputFormat? = null
 
-    @Option(names = ["--model"], paramLabel = "MODEL", description = ["Model or alias for this run, e.g. sonnet, opus, haiku or a full model id."])
+    @Option(
+        names = ["--model"],
+        paramLabel = "MODEL",
+        description = ["Model for this run: an alias (sonnet, opus, gpt, grok), a full id, or provider/model such as ollama/llama3.2."],
+    )
     var model: String? = null
 
     @Option(names = ["--cwd", "-C", "--directory"], paramLabel = "PATH", description = ["Run as if launched from PATH."])
@@ -24,6 +28,12 @@ class GlobalOptions {
 
     @Option(names = ["--allow-broad-cwd"], description = ["Allow your home folder or the filesystem root as the workspace."])
     var allowBroadCwd: Boolean = false
+
+    @Option(
+        names = ["--allow-over-budget"],
+        description = ["Go over butler.budgets limits without asking (for scripts; a warning is printed)."],
+    )
+    var allowOverBudget: Boolean = false
 
     companion object {
         const val MIXIN_NAME = "global"

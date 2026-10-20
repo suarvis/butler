@@ -6,9 +6,11 @@ import com.suarvis.butler.api.cli.command.CliInvocation
 import com.suarvis.butler.api.cli.dto.PromptResultOutput
 import com.suarvis.butler.api.cli.exception.CliUsageException
 import com.suarvis.butler.api.cli.mapper.TurnCliMapper
+import com.suarvis.butler.api.cli.prompt.CliTurnApprovers
 import com.suarvis.butler.api.cli.render.CliOutputWriter
 import com.suarvis.butler.api.cli.render.StreamingTurnObserver
 import com.suarvis.butler.core.domain.session.SessionReference
+import com.suarvis.butler.core.domain.turn.TurnApprover
 import com.suarvis.butler.core.domain.turn.TurnObserver
 import com.suarvis.butler.core.domain.turn.TurnSummary
 import com.suarvis.butler.core.usecase.turn.RunTurnUseCase
@@ -20,11 +22,19 @@ class PromptActions(
     private val runTurn: RunTurnUseCase,
     private val output: CliOutputWriter,
     private val console: CliConsole,
+    private val approvers: CliTurnApprovers,
 ) {
-    fun run(invocation: CliInvocation, prompt: String, session: SessionReference?, compact: Boolean): TurnSummary {
+    /** @param approver shared across a REPL session; a one-shot prompt gets its own. */
+    fun run(
+        invocation: CliInvocation,
+        prompt: String,
+        session: SessionReference?,
+        compact: Boolean,
+        approver: TurnApprover = approvers.create(invocation),
+    ): TurnSummary {
         val streaming = invocation.format == OutputFormat.TEXT && !compact
         val observer = if (streaming) StreamingTurnObserver(console.out) else TurnObserver.NONE
-        val summary = runTurn.execute(RunTurnUseCase.Command(invocation.workspace, prompt, session, invocation.model), observer)
+        val summary = runTurn.execute(RunTurnUseCase.Command(invocation.workspace, prompt, session, invocation.model), observer, approver)
         when {
             streaming -> Unit
             invocation.format == OutputFormat.TEXT -> {

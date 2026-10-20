@@ -198,3 +198,45 @@ data class PromptResultOutput(
     val estimatedCost: String?,
     val stopReason: String,
 )
+
+@Serializable
+data class UsageModelOutput(
+    val provider: String,
+    val model: String,
+    val calls: Long,
+    val costUsd: String,
+    val tokens: Long,
+)
+
+@Serializable
+data class UsageProviderOutput(
+    val provider: String,
+    val costUsd: String,
+    val tokens: Long,
+)
+
+@Serializable
+data class BudgetOutput(
+    val scope: String,
+    val name: String,
+    val monthlyUsd: String?,
+    val monthlyTokens: Long?,
+    val spentUsd: String,
+    val spentTokens: Long,
+    val exceeded: Boolean,
+)
+
+/** `butler usage`: this month's estimated spend and where each budget stands. */
+@Serializable
+data class UsageReportOutput(
+    val kind: String = "usage",
+    val status: String = "ok",
+    val period: String,
+    val periodLabel: String,
+    val timeZone: String,
+    val totalCostUsd: String,
+    val totalTokens: Long,
+    val providers: List<UsageProviderOutput>,
+    val models: List<UsageModelOutput>,
+    val budgets: List<BudgetOutput>,
+)

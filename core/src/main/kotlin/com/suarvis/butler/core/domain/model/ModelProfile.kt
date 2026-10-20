@@ -48,7 +48,8 @@ data class ModelProvider(val id: ProviderId, val kind: ProviderKind)
  * [apiModelName] is the name sent to the provider. It differs from [id] for `provider/model`
  * references: `ollama/llama3.2` is sent to Ollama as `llama3.2`. [maxOutputTokens] is null when
  * the limit is unknown; adaptors then fall back to the provider's own default. Pricing is optional
- * for unknown or local models.
+ * for unknown or local models. [contextWindow] (input tokens) is null when unknown, and then never
+ * rules a model out.
  */
 data class ModelProfile(
     val id: ModelId,
@@ -56,9 +57,11 @@ data class ModelProfile(
     val maxOutputTokens: Int?,
     val pricing: ModelPricing?,
     val apiModelName: String = id.value,
+    val contextWindow: Int? = null,
 ) {
     init {
         ensure(maxOutputTokens == null || maxOutputTokens > 0) { "Max output tokens must be positive" }
+        ensure(contextWindow == null || contextWindow > 0) { "Context window must be positive" }
         ensure(apiModelName.isNotBlank() && apiModelName.none(Char::isWhitespace)) { "Invalid provider model name '$apiModelName'" }
     }
 }

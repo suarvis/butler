@@ -3,6 +3,7 @@ package com.suarvis.butler.api.cli.repl
 import com.suarvis.butler.api.cli.ButlerVersion
 import com.suarvis.butler.api.cli.ExitCodes
 import com.suarvis.butler.api.cli.action.SessionActions
+import com.suarvis.butler.api.cli.action.UsageActions
 import com.suarvis.butler.api.cli.command.CliInvocation
 import com.suarvis.butler.api.cli.dto.HelpOutput
 import com.suarvis.butler.api.cli.dto.VersionOutput
@@ -23,6 +24,7 @@ import org.springframework.stereotype.Component
 @Component
 class ResumeRunner(
     private val sessions: SessionActions,
+    private val usage: UsageActions,
     private val output: CliOutputWriter,
 ) {
     fun run(invocation: CliInvocation, rawReference: String, arguments: List<String>): Int {
@@ -42,6 +44,7 @@ class ResumeRunner(
     private fun execute(invocation: CliInvocation, current: Session, command: SlashCommand): Session =
         when (command) {
             SlashCommand.Status -> current.also { sessions.status(invocation, it) }
+            SlashCommand.Usage -> current.also { usage.report(invocation.format) }
             is SlashCommand.Export -> current.also { sessions.export(invocation, it, command.path) }
             SlashCommand.SessionList -> current.also { sessions.list(invocation, PageRequest.firstPage()) }
             is SlashCommand.SessionExists -> current.also { sessions.exists(invocation, command.target) }

@@ -13,7 +13,12 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /** Everything a command needs to know about how it was invoked. */
-data class CliInvocation(val format: OutputFormat, val workspace: WorkspaceRoot, val model: ModelId? = null)
+data class CliInvocation(
+    val format: OutputFormat,
+    val workspace: WorkspaceRoot,
+    val model: ModelId? = null,
+    val allowOverBudget: Boolean = false,
+)
 
 @Component
 class CliInvocationResolver(
@@ -28,7 +33,7 @@ class CliInvocationResolver(
             WorkingDirectoryRequest(directory, environment.homeDirectory, options.any { it.allowBroadCwd }),
         )
         val model = options.firstNotNullOfOrNull { it.model }?.let(::ModelId)
-        return CliInvocation(format(options), WorkspaceRoot.of(directory), model)
+        return CliInvocation(format(options), WorkspaceRoot.of(directory), model, options.any { it.allowOverBudget })
     }
 
     /** For commands that do not touch a workspace (help, version). */

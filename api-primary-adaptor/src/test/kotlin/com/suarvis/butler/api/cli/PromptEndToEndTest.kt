@@ -49,14 +49,23 @@ class PromptEndToEndTest {
         System.setProperty(OPENAI_BASE_URL_PROPERTY, openai.baseUrl)
         System.setProperty(OPENAI_API_KEY_PROPERTY, "sk-test")
         System.setProperty(OLLAMA_BASE_URL_PROPERTY, openai.baseUrl)
+        // Never the real ~/.butler: the usage ledger and cooldowns of a test run stay in the temp folder.
+        System.setProperty(USER_DIRECTORY_PROPERTY, root.resolve("home/.butler").toString())
     }
 
     @AfterEach
     fun tearDown() {
         anthropic.close()
         openai.close()
-        listOf(BASE_URL_PROPERTY, API_KEY_PROPERTY, OPENAI_BASE_URL_PROPERTY, OPENAI_API_KEY_PROPERTY, OLLAMA_BASE_URL_PROPERTY)
-            .forEach(System::clearProperty)
+        listOf(
+            BASE_URL_PROPERTY,
+            API_KEY_PROPERTY,
+            OPENAI_BASE_URL_PROPERTY,
+            OPENAI_API_KEY_PROPERTY,
+            OLLAMA_BASE_URL_PROPERTY,
+            USER_DIRECTORY_PROPERTY,
+            ANTHROPIC_BUDGET_PROPERTY,
+        ).forEach(System::clearProperty)
     }
 
     private fun butler(vararg args: String, stdin: String = ""): CliRun {
@@ -263,6 +272,75 @@ class PromptEndToEndTest {
         assertTrue(openai.requests.isEmpty())
     }
 
+    @Test
+    fun `every call is recorded in the usage ledger and butler usage reports the month`() {
+        anthropic.answer("Hello")
+        butler("prompt", "hi")
+
+        val run = butler("--output-format", "json", "usage")
+
+        assertEquals(ExitCodes.OK, run.exitCode, run.stderr)
+        val report = run.json()
+        assertEquals("usage", report["kind"]!!.jsonPrimitive.content)
+        assertEquals(17, report["total_tokens"]!!.jsonPrimitive.int)
+        assertEquals("$0.0001", report["total_cost_usd"]!!.jsonPrimitive.content)
+        val model = report["models"]!!.jsonArray.single().jsonObject
+        assertEquals("claude-sonnet-4-6", model["model"]!!.jsonPrimitive.content)
+        assertEquals("anthropic", model["provider"]!!.jsonPrimitive.content)
+        assertTrue(Files.exists(root.resolve("home/.butler/usage")))
+    }
+
+    @Test
+    fun `over budget, a script stops with budget_exceeded before calling the provider`() {
+        System.setProperty(ANTHROPIC_BUDGET_PROPERTY, "0.0001")
+
+        val run = butler("--output-format", "json", "prompt", "hi")
+
+        assertEquals(ExitCodes.RUNTIME, run.exitCode)
+        assertEquals("budget_exceeded", run.json()["kind"]!!.jsonPrimitive.content)
+        assertTrue(run.json()["hint"]!!.jsonPrimitive.content.contains("--allow-over-budget"))
+        assertTrue(anthropic.requests.isEmpty())
+    }
+
+    @Test
+    fun `--allow-over-budget lets a script go over with a warning`() {
+        System.setProperty(ANTHROPIC_BUDGET_PROPERTY, "0.0001")
+        anthropic.answer("over budget, as allowed")
+
+        val run = butler("--allow-over-budget", "prompt", "hi")
+
+        assertEquals(ExitCodes.OK, run.exitCode, run.stderr)
+        assertTrue(run.stdout.contains("over budget, as allowed"), run.stdout)
+        assertTrue(run.stderr.contains("warning: anthropic monthly budget"), run.stderr)
+    }
+
+    @Test
+    fun `butler usage shows budgets and flags the exceeded ones`() {
+        System.setProperty(ANTHROPIC_BUDGET_PROPERTY, "0.00001")
+        anthropic.answer("costly")
+        butler("--allow-over-budget", "prompt", "hi")
+
+        val run = butler("usage")
+
+        assertEquals(ExitCodes.OK, run.exitCode, run.stderr)
+        assertTrue(run.stdout.contains("Budgets"), run.stdout)
+        assertTrue(run.stdout.contains("EXCEEDED"), run.stdout)
+    }
+
+    @Test
+    fun `a 429 is remembered, so the next run does not call the provider until the cooldown ends`() {
+        anthropic.fail(429, """{"type":"error","error":{"type":"rate_limit_error","message":"Number of requests has exceeded your rate limit"}}""")
+
+        val first = butler("--output-format", "json", "prompt", "one")
+        val second = butler("--output-format", "json", "prompt", "two")
+
+        assertEquals("rate_limited", first.json()["kind"]!!.jsonPrimitive.content)
+        assertEquals("rate_limited", second.json()["kind"]!!.jsonPrimitive.content)
+        assertTrue(second.json()["message"]!!.jsonPrimitive.content.contains("earlier 429"), second.stdout)
+        assertEquals(1, anthropic.requests.size)
+        assertTrue(Files.exists(root.resolve("home/.butler/rate-limits.json")))
+    }
+
     /** Minimal fake of POST /v1/messages that streams scripted answers. */
     private class FakeAnthropic : AutoCloseable {
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -346,5 +424,7 @@ class PromptEndToEndTest {
         const val OPENAI_BASE_URL_PROPERTY = "butler.providers.openai.base-url"
         const val OPENAI_API_KEY_PROPERTY = "butler.providers.openai.api-key"
         const val OLLAMA_BASE_URL_PROPERTY = "butler.providers.ollama.base-url"
+        const val USER_DIRECTORY_PROPERTY = "butler.persistence.file.user-directory"
+        const val ANTHROPIC_BUDGET_PROPERTY = "butler.budgets.providers.anthropic.monthly-usd"
     }
 }

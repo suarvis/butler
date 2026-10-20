@@ -1,5 +1,6 @@
 package com.suarvis.butler.core.domain.exception
 
+import com.suarvis.butler.core.domain.budget.BudgetBreach
 import com.suarvis.butler.core.domain.generic.ModelId
 import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.session.SessionReference
@@ -25,6 +26,13 @@ class TranscriptIntegrityException(message: String) : ButlerException(message)
 
 /** No configured provider can serve the requested model, so there is nothing to call. */
 class UnknownModelException(val model: ModelId, reason: String) : ButlerException("Unknown model '$model': $reason")
+
+/**
+ * The turn stopped because a budget would be exceeded and the user did not approve going over
+ * (or could not be asked, as in a script).
+ */
+class BudgetExceededException(val breaches: List<BudgetBreach>) :
+    ButlerException("Over budget: ${breaches.joinToString("; ") { it.describe() }}")
 
 /** A secondary adaptor could not complete a gateway call (storage, network, ...). */
 class GatewayException(message: String, cause: Throwable? = null) : ButlerException(message, cause)

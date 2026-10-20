@@ -1,9 +1,13 @@
 package com.suarvis.butler.api.config
 
+import com.suarvis.butler.core.gateway.BudgetGateway
 import com.suarvis.butler.core.gateway.IdentityGateway
 import com.suarvis.butler.core.gateway.ModelCatalogGateway
 import com.suarvis.butler.core.gateway.ModelGateway
+import com.suarvis.butler.core.gateway.RateLimitGateway
 import com.suarvis.butler.core.gateway.SessionGateway
+import com.suarvis.butler.core.gateway.UsageGateway
+import com.suarvis.butler.core.usecase.budget.GetUsageReportUseCase
 import com.suarvis.butler.core.usecase.model.ResolveModelUseCase
 import com.suarvis.butler.core.usecase.session.DeleteSessionUseCase
 import com.suarvis.butler.core.usecase.session.ForkSessionUseCase
@@ -21,8 +25,9 @@ import java.time.Clock
  */
 @Configuration(proxyBeanMethods = false)
 class UseCaseConfig {
+    /** System time zone: budgets reset at the start of the user's own calendar month. */
     @Bean
-    fun clock(): Clock = Clock.systemUTC()
+    fun clock(): Clock = Clock.systemDefaultZone()
 
     @Bean
     fun startSessionUseCase(sessions: SessionGateway, identity: IdentityGateway, clock: Clock) =
@@ -56,6 +61,16 @@ class UseCaseConfig {
         identity: IdentityGateway,
         models: ModelGateway,
         catalog: ModelCatalogGateway,
+        usage: UsageGateway,
+        rateLimits: RateLimitGateway,
+        budgets: BudgetGateway,
         clock: Clock,
-    ) = RunTurnUseCase(getSession, sessions, identity, models, catalog, clock)
+    ) = RunTurnUseCase(getSession, sessions, identity, models, catalog, usage, rateLimits, budgets, clock)
+
+    @Bean
+    fun getUsageReportUseCase(
+        usage: UsageGateway,
+        budgets: BudgetGateway,
+        clock: Clock,
+    ) = GetUsageReportUseCase(usage, budgets, clock)
 }

@@ -4,5 +4,10 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Configuration
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(PersistenceProperties::class, ModelCatalogProperties::class, ModelProviderProperties::class)
+@EnableConfigurationProperties(
+    PersistenceProperties::class,
+    ModelCatalogProperties::class,
+    ModelProviderProperties::class,
+    BudgetProperties::class,
+)
 class SecondaryAdaptorConfig

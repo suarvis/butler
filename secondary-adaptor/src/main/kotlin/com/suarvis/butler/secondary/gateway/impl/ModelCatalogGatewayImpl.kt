@@ -24,6 +24,13 @@ class ModelCatalogGatewayImpl(
 ) : ModelCatalogGateway {
     override fun defaultModel(): ModelId = ModelId(models.default)
 
+    override fun fallbacks(): List<ModelId> = models.fallbacks.map(::ModelId)
+
+    override fun isConfigured(provider: ProviderId): Boolean {
+        val endpoint = providers.providers[provider.value] ?: return false
+        return endpoint.baseUrl.isNotBlank() && (endpoint.apiKey.isNotBlank() || !endpoint.apiKeyRequired)
+    }
+
     override fun resolve(model: ModelId): ModelProfile {
         val canonical = models.aliases[model.value.lowercase()] ?: model.value
         val profile = models.profiles[canonical]
@@ -46,6 +53,7 @@ class ModelCatalogGatewayImpl(
             maxOutputTokens = profile?.maxOutputTokens,
             pricing = profile?.pricing?.let { ModelPricing(it.input, it.output, it.cacheWrite, it.cacheRead) },
             apiModelName = profile?.apiModel ?: reference?.takeIf { it.first == providerName }?.second ?: canonical,
+            contextWindow = profile?.contextWindow,
         )
     }
 

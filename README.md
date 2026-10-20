@@ -2,7 +2,7 @@
 
 Butler is a rewrite of [Claw Code](https://github.com/ultraworkers/claw-code) (the `claw` terminal coding agent) in **Kotlin + Spring Boot**, built on a strict clean architecture. It runs as a single local process: the CLI, the agent loop and the tools live in one JVM, and the tools act on the folder you run it from.
 
-> **Status:** slices 0–3a of the rewrite. In place: project skeleton and architecture guards, saved **sessions** (file and PostgreSQL stores), **conversations** (one-shot prompts, streaming, a basic interactive REPL) with **Anthropic and OpenAI-compatible providers** (OpenAI, xAI, OpenRouter, Ollama, any Chat Completions server), and **switching provider mid-session**. Token budgets and rate-limit routing, tools, approvals and MCP come in the next slices.
+> **Status:** slices 0–3 of the rewrite. In place: project skeleton and architecture guards, saved **sessions** (file and PostgreSQL stores), **conversations** (one-shot prompts, streaming, a basic interactive REPL) with **Anthropic and OpenAI-compatible providers** (OpenAI, xAI, OpenRouter, Ollama, any Chat Completions server), **switching provider mid-session**, and **monthly budgets with rate-limit-aware routing** (asks before going over; offers fallback models). Tools, permission approvals and MCP come in the next slices.
 
 ## Architecture
 
@@ -62,6 +62,7 @@ butler prompt --session latest "and what about the tests?"
 butler                                      # interactive REPL (/help, /model, /status, /exit)
                                             #   /model gpt switches provider; the conversation goes along
 butler --resume latest                      # REPL continuing the latest session
+butler usage                                # this month's spend per provider and model, and budgets
 butler session list
 butler status
 butler --output-format json session list
@@ -87,12 +88,28 @@ A model is named by an alias (`opus`, `sonnet`, `haiku`, `gpt`, `grok`), a full 
 
 Another OpenAI-compatible server (vLLM, LM Studio, a company gateway) is one more `butler.providers.<id>` entry in configuration; no code. A session can change model and provider at any point: each request sends the stored conversation in a form the new provider accepts (provider-specific thinking is dropped, tool history the request cannot replay becomes text), while the saved session keeps everything.
 
+### Budgets and rate limits
+
+With your own keys there is no prepaid balance, so Butler keeps a usage ledger (every model call, its tokens and estimated USD cost) and checks it against monthly budgets you set per provider and, optionally, per model:
+
+```yaml
+butler:
+  budgets:
+    providers:
+      anthropic: { monthly-usd: 50 }
+      openai: { monthly-usd: 20, monthly-tokens: 20000000 }
+    models:
+      claude-opus-4-7: { monthly-usd: 30 }
+```
+
+Before each call Butler adds this month's spend to the estimated input cost of the request. If that passes a limit, or the provider answered 429 recently (the cooldown is remembered across runs), the turn asks: continue over budget, switch to one of your `butler.models.fallbacks` that has a key and is within budget, or stop. "Continue" covers the rest of the REPL session. Scripts and piped runs are never asked: they stop with `budget_exceeded` (exit 1) unless you pass `--allow-over-budget`, which prints a warning instead. Months follow your system time zone; the answer's own cost is only known afterwards, so one answer can go slightly past a limit. `butler usage` (or `/usage`) shows where you stand.
+
 ### Session storage
 
 | Store | Select with | Where |
 |---|---|---|
-| Files (default) | `butler.persistence.store=file` | `<workspace>/.butler/sessions/<id>.jsonl`, in Claw Code's session format v3 |
-| PostgreSQL | `BUTLER_PERSISTENCE_STORE=postgresql` | `butler_session*` tables, migrated by Flyway on first use |
+| Files (default) | `butler.persistence.store=file` | `<workspace>/.butler/sessions/<id>.jsonl`, in Claw Code's session format v3; usage ledger in `~/.butler/usage/<yyyy-MM>.jsonl`, cooldowns in `~/.butler/rate-limits.json` |
+| PostgreSQL | `BUTLER_PERSISTENCE_STORE=postgresql` | `butler_session*`, `butler_usage` and `butler_rate_limit` tables, migrated by Flyway on first use |
 
 ```bash
 docker compose up -d postgres
@@ -115,6 +132,7 @@ Spring configuration properties, overridable by environment variables:
 |---|---|---|
 | `butler.persistence.store` | `BUTLER_PERSISTENCE_STORE` | `file` |
 | `butler.persistence.file.directory` | `BUTLER_PERSISTENCE_FILE_DIRECTORY` | `.butler/sessions` |
+| `butler.persistence.file.user-directory` | `BUTLER_PERSISTENCE_FILE_USERDIRECTORY` | `~/.butler` |
 | `butler.persistence.postgresql.url` | `BUTLER_PERSISTENCE_POSTGRESQL_URL` | `jdbc:postgresql://localhost:5432/butler` |
 | `butler.persistence.postgresql.username` | `BUTLER_PERSISTENCE_POSTGRESQL_USERNAME` | `butler` |
 | `butler.persistence.postgresql.password` | `BUTLER_PERSISTENCE_POSTGRESQL_PASSWORD` | *(none)* |
@@ -122,7 +140,10 @@ Spring configuration properties, overridable by environment variables:
 | `butler.providers.<id>.base-url` | `<ID>_BASE_URL` | per provider, see above |
 | `butler.providers.<id>.kind`, `model-prefixes`, `max-tokens-parameter`, `stream-usage`, `api-key-required` | — | in `application.yml` |
 | `butler.models.default` | `BUTLER_MODELS_DEFAULT` | `sonnet` |
-| `butler.models.aliases.*`, `butler.models.profiles.*` | — | aliases, providers, output limits and prices in `application.yml` |
+| `butler.models.aliases.*`, `butler.models.profiles.*` | — | aliases, providers, output limits, context windows and prices in `application.yml` |
+| `butler.models.fallbacks` | — | `sonnet, gpt, grok` |
+| `butler.budgets.providers.<id>.monthly-usd` / `monthly-tokens` | e.g. `BUTLER_BUDGETS_PROVIDERS_ANTHROPIC_MONTHLYUSD` | *(no limits)* |
+| `butler.budgets.models.<id>.monthly-usd` / `monthly-tokens` | — | *(no limits)* |
 | — | `BUTLER_OUTPUT_FORMAT` | `text` |
 | — | `BUTLER_LOG_LEVEL` | `WARN` (logs go to stderr) |
 

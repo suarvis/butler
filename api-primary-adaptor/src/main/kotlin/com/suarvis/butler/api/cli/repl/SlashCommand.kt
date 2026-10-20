@@ -9,6 +9,9 @@ import com.suarvis.butler.api.cli.exception.CliUsageException
 sealed interface SlashCommand {
     data object Status : SlashCommand
 
+    /** This month's spend against budgets. */
+    data object Usage : SlashCommand
+
     data class Export(val path: String?) : SlashCommand
 
     data object SessionList : SlashCommand
@@ -37,7 +40,7 @@ sealed interface SlashCommand {
 
 /** Splits `/status /export notes.md /session fork try-b` into commands with their arguments. */
 object SlashCommandParser {
-    const val SUPPORTED = "/status, /export [file], /session [list|exists ID|switch ID|fork [branch]|delete ID], /version, /help"
+    const val SUPPORTED = "/status, /usage, /export [file], /session [list|exists ID|switch ID|fork [branch]|delete ID], /version, /help"
     const val INTERACTIVE_ONLY = "/model [name], /clear, /exit"
 
     fun parse(tokens: List<String>): List<SlashCommand> {
@@ -55,6 +58,7 @@ object SlashCommandParser {
     private fun toCommand(name: String, args: List<String>): SlashCommand =
         when (name) {
             "status" -> noArguments(name, args, SlashCommand.Status)
+            "usage" -> noArguments(name, args, SlashCommand.Usage)
             "export" -> SlashCommand.Export(atMostOne(name, args))
             "version" -> noArguments(name, args, SlashCommand.Version)
             "help" -> noArguments(name, args, SlashCommand.Help)

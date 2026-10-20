@@ -48,12 +48,21 @@ class ScriptedModelGateway(vararg replies: Reply) : ModelGateway {
 
 /**
  * Catalog with Clawcode's Anthropic aliases, `gpt-*` models served by OpenAI and `ollama/...`
- * references served by a local Ollama. Anything else is unknown.
+ * references served by a local Ollama. Anything else is unknown. Every provider counts as
+ * configured unless listed in [unconfiguredProviders].
  */
-class FixedModelCatalog(private val default: ModelId = ModelId("sonnet")) : ModelCatalogGateway {
+class FixedModelCatalog(
+    private val default: ModelId = ModelId("sonnet"),
+    var fallbackModels: List<ModelId> = listOf(ModelId("sonnet"), ModelId("gpt-5.5")),
+    var unconfiguredProviders: Set<ProviderId> = emptySet(),
+) : ModelCatalogGateway {
     private val aliases = mapOf("sonnet" to "claude-sonnet-4-6", "opus" to "claude-opus-4-7", "haiku" to "claude-haiku-4-5")
 
     override fun defaultModel(): ModelId = default
+
+    override fun fallbacks(): List<ModelId> = fallbackModels
+
+    override fun isConfigured(provider: ProviderId): Boolean = provider !in unconfiguredProviders
 
     override fun resolve(model: ModelId): ModelProfile {
         val id = aliases[model.value] ?: model.value
