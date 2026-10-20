@@ -4,6 +4,7 @@ import com.suarvis.butler.api.ButlerApplication
 import com.sun.net.httpserver.HttpServer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -218,12 +219,15 @@ class PromptEndToEndTest {
         assertTrue(run.stdout.contains("Switching provider anthropic → openai"), run.stdout)
         assertTrue(run.stdout.contains("Hello from GPT"), run.stdout)
         assertEquals(1, anthropic.requests.size)
+        // OpenAI is reached through the Responses API.
+        assertEquals("/v1/responses", openai.requests.last().path)
         val request = lastOpenAiRequest()
         assertEquals("gpt-5.5", request["model"]!!.jsonPrimitive.content)
-        assertEquals(128_000, request["max_completion_tokens"]!!.jsonPrimitive.int)
-        val messages = request["messages"]!!.jsonArray.map { it.jsonObject }
-        assertEquals(listOf("system", "user", "assistant", "user"), messages.map { it["role"]!!.jsonPrimitive.content })
-        assertEquals(listOf("Say hello", "Hello from Claude", "And again"), messages.drop(1).map { it["content"]!!.jsonPrimitive.content })
+        assertEquals(128_000, request["max_output_tokens"]!!.jsonPrimitive.int)
+        assertEquals(false, request["store"]!!.jsonPrimitive.boolean)
+        val input = request["input"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("system", "user", "assistant", "user"), input.map { it["role"]!!.jsonPrimitive.content })
+        assertEquals(listOf("Say hello", "Hello from Claude", "And again"), input.drop(1).map { it["content"]!!.jsonPrimitive.content })
         assertTrue(savedSessionText().contains("\"model\":\"gpt-5.5\""))
     }
 
@@ -236,6 +240,8 @@ class PromptEndToEndTest {
         assertEquals(ExitCodes.OK, run.exitCode, run.stderr)
         assertEquals("ollama", run.json()["provider"]!!.jsonPrimitive.content)
         assertEquals("ollama/llama3.2", run.json()["model"]!!.jsonPrimitive.content)
+        // Ollama stays on Chat Completions.
+        assertEquals("/v1/chat/completions", openai.requests.last().path)
         assertEquals("llama3.2", lastOpenAiRequest()["model"]!!.jsonPrimitive.content)
         assertEquals(null, openai.requests.last().authorization)
     }
@@ -380,9 +386,12 @@ class PromptEndToEndTest {
         override fun close() = server.stop(0)
     }
 
-    /** Minimal fake of POST /chat/completions (OpenAI-compatible) that streams scripted answers. */
+    /**
+     * Minimal fake of an OpenAI-style server: POST /responses (OpenAI, xAI) and POST
+     * /chat/completions (Ollama and other compatible servers), each answering in its own format.
+     */
     private class FakeOpenAi : AutoCloseable {
-        data class Recorded(val body: String, val authorization: String?)
+        data class Recorded(val path: String, val body: String, val authorization: String?)
 
         private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
         private val replies = ConcurrentLinkedQueue<String>()
@@ -392,10 +401,16 @@ class PromptEndToEndTest {
             get() = "http://127.0.0.1:${server.address.port}/v1"
 
         init {
-            server.createContext("/v1/chat/completions") { exchange ->
-                requests += Recorded(exchange.requestBody.readAllBytes().toString(Charsets.UTF_8), exchange.requestHeaders.getFirst("Authorization"))
-                val reply = replies.poll()
-                val (status, body) = if (reply == null) 500 to """{"error":{"message":"no scripted reply"}}""" else 200 to reply
+            server.createContext("/v1/") { exchange ->
+                val path = exchange.requestURI.path
+                requests += Recorded(path, exchange.requestBody.readAllBytes().toString(Charsets.UTF_8), exchange.requestHeaders.getFirst("Authorization"))
+                val text = replies.poll()
+                val (status, body) =
+                    when {
+                        text == null -> 500 to """{"error":{"message":"no scripted reply"}}"""
+                        path.endsWith("/responses") -> 200 to responsesStream(text)
+                        else -> 200 to chatStream(text)
+                    }
                 val bytes = body.toByteArray(Charsets.UTF_8)
                 exchange.sendResponseHeaders(status, bytes.size.toLong())
                 exchange.responseBody.use { it.write(bytes) }
@@ -403,17 +418,26 @@ class PromptEndToEndTest {
             server.start()
         }
 
-        fun answer(text: String): FakeOpenAi =
-            apply {
-                val chunks =
-                    listOf(
-                        """{"choices":[{"index":0,"delta":{"role":"assistant","content":"$text"},"finish_reason":null}]}""",
-                        """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
-                        """{"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4}}""",
-                        "[DONE]",
-                    )
-                replies += chunks.joinToString(separator = "") { "data: $it\n\n" }
-            }
+        fun answer(text: String): FakeOpenAi = apply { replies += text }
+
+        private fun chatStream(text: String): String =
+            listOf(
+                """{"choices":[{"index":0,"delta":{"role":"assistant","content":"$text"},"finish_reason":null}]}""",
+                """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
+                """{"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4}}""",
+                "[DONE]",
+            ).joinToString(separator = "") { "data: $it\n\n" }
+
+        private fun responsesStream(text: String): String {
+            val message = """{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"$text"}]}"""
+            return listOf(
+                "response.output_text.delta" to """{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"$text"}""",
+                "response.output_item.done" to """{"type":"response.output_item.done","output_index":0,"item":$message}""",
+                "response.completed" to
+                    """{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[$message],""" +
+                    """"usage":{"input_tokens":20,"input_tokens_details":{"cached_tokens":0},"output_tokens":4,"total_tokens":24}}}""",
+            ).joinToString(separator = "") { (event, data) -> "event: $event\ndata: $data\n\n" }
+        }
 
         override fun close() = server.stop(0)
     }

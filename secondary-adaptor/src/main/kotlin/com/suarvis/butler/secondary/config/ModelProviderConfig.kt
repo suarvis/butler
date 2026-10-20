@@ -7,10 +7,12 @@ import com.suarvis.butler.core.gateway.ModelCatalogGateway
 import com.suarvis.butler.core.gateway.ModelGateway
 import com.suarvis.butler.secondary.client.anthropic.AnthropicMessagesClient
 import com.suarvis.butler.secondary.client.openai.OpenAiChatClient
+import com.suarvis.butler.secondary.client.openai.OpenAiResponsesClient
 import com.suarvis.butler.secondary.gateway.impl.AnthropicModelGatewayImpl
 import com.suarvis.butler.secondary.gateway.impl.BudgetGatewayImpl
 import com.suarvis.butler.secondary.gateway.impl.ModelCatalogGatewayImpl
 import com.suarvis.butler.secondary.gateway.impl.OpenAiCompatibleModelGatewayImpl
+import com.suarvis.butler.secondary.gateway.impl.OpenAiResponsesModelGatewayImpl
 import com.suarvis.butler.secondary.gateway.impl.RoutingModelGatewayImpl
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -40,6 +42,7 @@ class ModelProviderConfig {
                     when (endpoint.kind) {
                         ProviderKind.ANTHROPIC -> AnthropicModelGatewayImpl(AnthropicMessagesClient(id, endpoint))
                         ProviderKind.OPENAI_COMPATIBLE -> OpenAiCompatibleModelGatewayImpl(OpenAiChatClient(id, endpoint))
+                        ProviderKind.OPENAI_RESPONSES -> OpenAiResponsesModelGatewayImpl(OpenAiResponsesClient(id, endpoint))
                     }
             },
         )

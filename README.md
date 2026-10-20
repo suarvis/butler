@@ -2,7 +2,7 @@
 
 Butler is a rewrite of [Claw Code](https://github.com/ultraworkers/claw-code) (the `claw` terminal coding agent) in **Kotlin + Spring Boot**, built on a strict clean architecture. It runs as a single local process: the CLI, the agent loop and the tools live in one JVM, and the tools act on the folder you run it from.
 
-> **Status:** slices 0–3 of the rewrite. In place: project skeleton and architecture guards, saved **sessions** (file and PostgreSQL stores), **conversations** (one-shot prompts, streaming, a basic interactive REPL) with **Anthropic and OpenAI-compatible providers** (OpenAI, xAI, OpenRouter, Ollama, any Chat Completions server), **switching provider mid-session**, and **monthly budgets with rate-limit-aware routing** (asks before going over; offers fallback models). Tools, permission approvals and MCP come in the next slices.
+> **Status:** slices 0–3 of the rewrite. In place: project skeleton and architecture guards, saved **sessions** (file and PostgreSQL stores), **conversations** (one-shot prompts, streaming, a basic interactive REPL) with **Anthropic, OpenAI and xAI (Responses API) and OpenAI-compatible providers** (OpenRouter, Ollama, any Chat Completions server), **switching provider mid-session**, and **monthly budgets with rate-limit-aware routing** (asks before going over; offers fallback models). Tools, permission approvals and MCP come in the next slices.
 
 ## Architecture
 
@@ -81,12 +81,12 @@ A model is named by an alias (`opus`, `sonnet`, `haiku`, `gpt`, `grok`), a full 
 | Provider | Dialect | Key | Base URL (override) |
 |---|---|---|---|
 | `anthropic` | Anthropic Messages | `ANTHROPIC_API_KEY` | `ANTHROPIC_BASE_URL` |
-| `openai` | Chat Completions | `OPENAI_API_KEY` | `OPENAI_BASE_URL` |
-| `xai` | Chat Completions | `XAI_API_KEY` | `XAI_BASE_URL` |
+| `openai` | Responses API | `OPENAI_API_KEY` | `OPENAI_BASE_URL` |
+| `xai` | Responses API | `XAI_API_KEY` | `XAI_BASE_URL` |
 | `openrouter` | Chat Completions | `OPENROUTER_API_KEY` | `OPENROUTER_BASE_URL` |
 | `ollama` | Chat Completions | none | `OLLAMA_BASE_URL` (`http://localhost:11434/v1`) |
 
-Another OpenAI-compatible server (vLLM, LM Studio, a company gateway) is one more `butler.providers.<id>` entry in configuration; no code. A session can change model and provider at any point: each request sends the stored conversation in a form the new provider accepts (provider-specific thinking is dropped, tool history the request cannot replay becomes text), while the saved session keeps everything.
+Each provider's `kind` picks its API dialect: `anthropic`, `openai-responses` (the OpenAI Responses API, which OpenAI and xAI recommend and which OpenAI's newest models need for tool calling) or `openai-compatible` (Chat Completions, for OpenRouter, Ollama and most other servers). Responses requests are sent with `store: false`: Butler keeps the conversation itself. Another server (vLLM, LM Studio, a company gateway) is one more `butler.providers.<id>` entry in configuration; no code. A session can change model and provider at any point: each request sends the stored conversation in a form the new provider accepts (provider-specific thinking is dropped, tool history the request cannot replay becomes text), while the saved session keeps everything.
 
 ### Budgets and rate limits
 

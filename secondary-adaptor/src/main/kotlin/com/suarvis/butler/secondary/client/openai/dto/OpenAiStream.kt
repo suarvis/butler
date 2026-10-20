@@ -17,3 +17,20 @@ data class OpenAiCompletion(
 
 /** Request settings that differ between OpenAI-compatible servers. */
 data class OpenAiRequestOptions(val maxTokensParameter: String, val streamUsage: Boolean)
+
+/** One item of a Responses API `output` array that Butler uses; other item types are ignored. */
+sealed interface ResponsesOutputItem {
+    data class Message(val text: String, val refusal: String?) : ResponsesOutputItem
+
+    data class FunctionCall(val callId: String, val name: String, val argumentsJson: String) : ResponsesOutputItem
+
+    data class Reasoning(val summary: String) : ResponsesOutputItem
+}
+
+/** A streamed Responses API answer, assembled. [status] is completed, incomplete, ... */
+data class ResponsesResult(
+    val items: List<ResponsesOutputItem>,
+    val status: String?,
+    val incompleteReason: String?,
+    val usage: OpenAiUsage,
+)

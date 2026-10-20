@@ -82,3 +82,30 @@ object OpenAiStreams {
             add("[DONE]")
         }.toTypedArray()
 }
+
+/** Scripted OpenAI Responses API streams (named events, as OpenAI and xAI send them). */
+object OpenAiResponsesStreams {
+    fun event(type: String, body: String): Pair<String, String> = type to """{"type":"$type",$body}"""
+
+    fun completed(output: String, input: Int = 30, outputTokens: Int = 6, cached: Int = 0, status: String = "completed", incompleteReason: String? = null): Pair<String, String> {
+        val incomplete = incompleteReason?.let { """{"reason":"$it"}""" } ?: "null"
+        val type = if (status == "incomplete") "response.incomplete" else "response.completed"
+        return event(
+            type,
+            """"response":{"id":"resp_1","object":"response","status":"$status","incomplete_details":$incomplete,"output":$output,""" +
+                """"usage":{"input_tokens":$input,"input_tokens_details":{"cached_tokens":$cached},"output_tokens":$outputTokens,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":${input + outputTokens}}}""",
+        )
+    }
+
+    fun message(text: String): String =
+        """{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"$text","annotations":[]}]}"""
+
+    fun textAnswer(vararg chunks: String, input: Int = 30, outputTokens: Int = 6, cached: Int = 0): Array<Pair<String, String>> =
+        buildList {
+            add(event("response.created", """"response":{"id":"resp_1","object":"response","status":"in_progress","output":[],"usage":null}"""))
+            add(event("response.output_item.added", """"output_index":0,"item":{"type":"message","id":"msg_1","status":"in_progress","role":"assistant","content":[]}"""))
+            chunks.forEach { add(event("response.output_text.delta", """"item_id":"msg_1","output_index":0,"content_index":0,"delta":"$it"""")) }
+            add(event("response.output_item.done", """"output_index":0,"item":${message(chunks.joinToString(""))}"""))
+            add(completed("[${message(chunks.joinToString(""))}]", input, outputTokens, cached))
+        }.toTypedArray()
+}

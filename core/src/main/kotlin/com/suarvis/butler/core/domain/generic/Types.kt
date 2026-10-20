@@ -10,11 +10,13 @@ enum class MessageRole {
 
 /**
  * The API dialect a provider speaks. Several providers share a dialect: OpenAI-compatible (Chat
- * Completions) covers OpenAI, xAI, OpenRouter, Ollama and most local servers.
+ * Completions) covers OpenRouter, Ollama and most local servers; the OpenAI Responses API is what
+ * OpenAI and xAI recommend, and the only way OpenAI's newest models call tools.
  */
 enum class ProviderKind {
     ANTHROPIC,
     OPENAI_COMPATIBLE,
+    OPENAI_RESPONSES,
 }
 
 /** Why the model stopped generating. */

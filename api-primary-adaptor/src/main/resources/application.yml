@@ -76,8 +76,9 @@ butler:
   # or from the environment: BUTLER_BUDGETS_PROVIDERS_ANTHROPIC_MONTHLYUSD=50
 
   # Providers, by id. Bring your own key: keys are read from the environment and never stored by
-  # Butler. kind is the API dialect: anthropic, or openai-compatible (Chat Completions). Any other
-  # OpenAI-compatible server (vLLM, LM Studio, a company gateway) is one more entry here.
+  # Butler. kind is the API dialect: anthropic, openai-responses (OpenAI Responses API), or
+  # openai-compatible (Chat Completions). Any other compatible server (vLLM, LM Studio, a company
+  # gateway) is one more entry here.
   providers:
     anthropic:
       kind: anthropic
@@ -85,13 +86,16 @@ butler:
       base-url: ${ANTHROPIC_BASE_URL:https://api.anthropic.com}
       model-prefixes: [claude]
     openai:
-      kind: openai-compatible
+      # The Responses API: required for tool calling on OpenAI's newest models.
+      kind: openai-responses
       api-key: ${OPENAI_API_KEY:}
       base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      # Only used if kind is switched back to openai-compatible (Chat Completions).
       max-tokens-parameter: max_completion_tokens
       model-prefixes: [gpt-, chatgpt-, o1, o3, o4]
     xai:
-      kind: openai-compatible
+      # xAI recommends its Responses API; its Chat Completions endpoint is legacy.
+      kind: openai-responses
       api-key: ${XAI_API_KEY:}
       base-url: ${XAI_BASE_URL:https://api.x.ai/v1}
       model-prefixes: [grok]

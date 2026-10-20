@@ -53,9 +53,9 @@ data class ModelProviderProperties(
      *   e.g. `gpt-` for OpenAI; the longest matching prefix across providers wins.
      * @param apiKeyRequired false for local servers such as Ollama that accept any or no key.
      * @param apiVersion Anthropic only: the `anthropic-version` header.
-     * @param maxTokensParameter OpenAI-compatible only: OpenAI wants `max_completion_tokens`,
+     * @param maxTokensParameter Chat Completions only: OpenAI wants `max_completion_tokens`,
      *   while many compatible servers only understand the older `max_tokens`.
-     * @param streamUsage OpenAI-compatible only: ask for token usage at the end of the stream;
+     * @param streamUsage Chat Completions only: ask for token usage at the end of the stream;
      *   turn off for servers that reject `stream_options`.
      */
     data class Endpoint(
