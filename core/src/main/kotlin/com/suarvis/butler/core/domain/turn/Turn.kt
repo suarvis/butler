@@ -5,6 +5,7 @@ import com.suarvis.butler.core.domain.generic.SessionId
 import com.suarvis.butler.core.domain.generic.StopReason
 import com.suarvis.butler.core.domain.generic.TokenUsage
 import com.suarvis.butler.core.domain.model.ModelProfile
+import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
 import com.suarvis.butler.core.domain.session.Session
 import java.math.BigDecimal
@@ -16,6 +17,11 @@ sealed interface TurnEvent {
     data class TextDelta(val text: String) : TurnEvent
 
     data class ThinkingDelta(val text: String) : TurnEvent
+
+    /** The turn is running a tool call the model made; [ToolFinished] follows with its result. */
+    data class ToolStarted(val call: ContentBlock.ToolUse) : TurnEvent
+
+    data class ToolFinished(val call: ContentBlock.ToolUse, val result: ContentBlock.ToolResult) : TurnEvent
 
     data class Completed(val summary: TurnSummary) : TurnEvent
 }
@@ -40,6 +46,8 @@ data class TurnSummary(
     val iterations: Int,
     val usage: TokenUsage,
     val stopReason: StopReason,
+    /** True when the turn was cancelled; the CLI reports it differently. */
+    val interrupted: Boolean = false,
 ) {
     val finalText: String
         get() = assistantMessages.lastOrNull()?.text.orEmpty()

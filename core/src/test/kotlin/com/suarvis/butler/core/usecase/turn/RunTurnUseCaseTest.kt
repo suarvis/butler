@@ -23,6 +23,7 @@ import com.suarvis.butler.core.domain.session.SessionReference
 import com.suarvis.butler.core.domain.turn.ApprovalDecision
 import com.suarvis.butler.core.domain.turn.ApprovalRequest
 import com.suarvis.butler.core.domain.turn.TurnApprover
+import com.suarvis.butler.core.domain.turn.TurnCallbacks
 import com.suarvis.butler.core.domain.turn.TurnEvent
 import com.suarvis.butler.core.domain.turn.TurnObserver
 import com.suarvis.butler.core.fixtures.FixedBudgetGateway
@@ -103,7 +104,7 @@ class RunTurnUseCaseTest {
 
         useCase(ScriptedModelGateway(ScriptedModelGateway.answer("a", "b"))).execute(
             RunTurnUseCase.Command(workspace, "go"),
-            TurnObserver { events += it },
+            TurnCallbacks(observer = TurnObserver { events += it }),
         )
 
         assertTrue(events.first() is TurnEvent.Started && (events.first() as TurnEvent.Started).newSession)
@@ -258,7 +259,7 @@ class RunTurnUseCaseTest {
         val approver = ScriptedApprover({ ApprovalDecision.Continue })
         val models = ScriptedModelGateway(ScriptedModelGateway.answer("over budget but approved"))
 
-        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "go"), approver = approver)
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "go"), TurnCallbacks(approver = approver))
 
         assertEquals("over budget but approved", summary.finalText)
         val obstacle = approver.requests.single().obstacles.single() as RoutingObstacle.OverBudget
@@ -273,7 +274,7 @@ class RunTurnUseCaseTest {
         val approver = ScriptedApprover({ request -> ApprovalDecision.SwitchTo(request.alternatives.single()) })
         val models = ScriptedModelGateway(ScriptedModelGateway.answer("from GPT"))
 
-        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "go"), approver = approver)
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "go"), TurnCallbacks(approver = approver))
 
         assertEquals(listOf(ModelId("gpt-5.5")), approver.requests.single().alternatives.map { it.id })
         assertEquals(FixedModelCatalog.OPENAI, models.requests.single().model.provider)
@@ -290,7 +291,7 @@ class RunTurnUseCaseTest {
         rateLimits.record(ProviderId("ollama"), SessionFixtures.start.plusSeconds(30))
         val approver = ScriptedApprover({ ApprovalDecision.Stop })
 
-        assertThrows<BudgetExceededException> { useCase(ScriptedModelGateway()).execute(RunTurnUseCase.Command(workspace, "go"), approver = approver) }
+        assertThrows<BudgetExceededException> { useCase(ScriptedModelGateway()).execute(RunTurnUseCase.Command(workspace, "go"), TurnCallbacks(approver = approver)) }
 
         assertTrue(approver.requests.single().alternatives.isEmpty(), approver.requests.single().alternatives.toString())
     }
@@ -313,7 +314,7 @@ class RunTurnUseCaseTest {
         val models = ScriptedModelGateway(ScriptedModelGateway.Reply.Failure(limited), ScriptedModelGateway.answer("from GPT"))
         val approver = ScriptedApprover({ request -> ApprovalDecision.SwitchTo(request.alternatives.first()) })
 
-        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "go"), approver = approver)
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "go"), TurnCallbacks(approver = approver))
 
         assertEquals(SessionFixtures.start.plusSeconds(20), rateLimits.cooldowns[ProviderId("anthropic")])
         assertTrue(approver.requests.single().obstacles.single() is RoutingObstacle.RateLimited)
@@ -328,7 +329,7 @@ class RunTurnUseCaseTest {
         val models = ScriptedModelGateway(ScriptedModelGateway.Reply.Failure(noQuota), ScriptedModelGateway.answer("second try"))
         val approver = ScriptedApprover({ ApprovalDecision.Continue })
 
-        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "go"), approver = approver)
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "go"), TurnCallbacks(approver = approver))
 
         val request = approver.requests.single()
         assertTrue(request.obstacles.single() is RoutingObstacle.Unavailable)

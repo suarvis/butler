@@ -11,6 +11,7 @@ import com.suarvis.butler.api.cli.render.CliOutputWriter
 import com.suarvis.butler.api.cli.render.StreamingTurnObserver
 import com.suarvis.butler.core.domain.session.SessionReference
 import com.suarvis.butler.core.domain.turn.TurnApprover
+import com.suarvis.butler.core.domain.turn.TurnCallbacks
 import com.suarvis.butler.core.domain.turn.TurnObserver
 import com.suarvis.butler.core.domain.turn.TurnSummary
 import com.suarvis.butler.core.usecase.turn.RunTurnUseCase
@@ -34,7 +35,11 @@ class PromptActions(
     ): TurnSummary {
         val streaming = invocation.format == OutputFormat.TEXT && !compact
         val observer = if (streaming) StreamingTurnObserver(console.out) else TurnObserver.NONE
-        val summary = runTurn.execute(RunTurnUseCase.Command(invocation.workspace, prompt, session, invocation.model), observer, approver)
+        val summary =
+            runTurn.execute(
+                RunTurnUseCase.Command(invocation.workspace, prompt, session, invocation.model),
+                TurnCallbacks(observer = observer, approver = approver),
+            )
         when {
             streaming -> Unit
             invocation.format == OutputFormat.TEXT -> {

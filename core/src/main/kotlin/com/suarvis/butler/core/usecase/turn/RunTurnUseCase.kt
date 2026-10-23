@@ -14,6 +14,7 @@ import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelResponse
 import com.suarvis.butler.core.domain.model.ModelStreamEvent
 import com.suarvis.butler.core.domain.model.TranscriptNormalizer
+import com.suarvis.butler.core.domain.permission.PermissionMode
 import com.suarvis.butler.core.domain.routing.RoutingContext
 import com.suarvis.butler.core.domain.routing.RoutingObstacle
 import com.suarvis.butler.core.domain.routing.RoutingPolicy
@@ -25,8 +26,10 @@ import com.suarvis.butler.core.domain.turn.ApprovalDecision
 import com.suarvis.butler.core.domain.turn.ApprovalRequest
 import com.suarvis.butler.core.domain.turn.SystemPromptComposer
 import com.suarvis.butler.core.domain.turn.TurnApprover
+import com.suarvis.butler.core.domain.turn.TurnCallbacks
 import com.suarvis.butler.core.domain.turn.TurnEvent
 import com.suarvis.butler.core.domain.turn.TurnObserver
+import com.suarvis.butler.core.domain.turn.TurnSettings
 import com.suarvis.butler.core.domain.turn.TurnSummary
 import com.suarvis.butler.core.gateway.BudgetGateway
 import com.suarvis.butler.core.gateway.IdentityGateway
@@ -50,8 +53,8 @@ import java.time.LocalDate
  *
  * The model may differ from the one that wrote earlier messages, even its provider: the
  * transcript is normalized for each request, so a session can move between providers. When the
- * chosen model is over budget, rate limited or out of quota, the [TurnApprover] decides: go
- * ahead anyway, switch to one of the clear fallbacks, or stop.
+ * chosen model is over budget, rate limited or out of quota, the caller's [TurnApprover] (in
+ * [TurnCallbacks]) decides: go ahead anyway, switch to one of the clear fallbacks, or stop.
  */
 class RunTurnUseCase(
     private val getSession: GetSessionUseCase,
@@ -63,23 +66,28 @@ class RunTurnUseCase(
     private val rateLimits: RateLimitGateway,
     private val budgets: BudgetGateway,
     private val clock: Clock,
+    val settings: TurnSettings = TurnSettings(),
 ) {
     /**
      * @param session continue this saved session; null starts a new one.
      * @param model override for this turn; otherwise the session's model, otherwise the default.
+     * @param allowedTools null means every tool; --allowedTools narrows it.
      */
     data class Command(
         val workspace: WorkspaceRoot,
         val prompt: String,
         val session: SessionReference? = null,
         val model: ModelId? = null,
+        val permissionMode: PermissionMode = PermissionMode.PROMPT,
+        val allowedTools: Set<ToolName>? = null,
     )
 
     fun execute(
         command: Command,
-        observer: TurnObserver = TurnObserver.NONE,
-        approver: TurnApprover = TurnApprover.STOP,
+        callbacks: TurnCallbacks = TurnCallbacks(),
     ): TurnSummary {
+        val observer = callbacks.observer
+        val approver = callbacks.approver
         val startedAt = clock.instant()
         val existing = command.session?.let { getSession.execute(command.workspace, it) }
         var session =

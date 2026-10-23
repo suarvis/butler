@@ -24,6 +24,8 @@ class StreamingTurnObserver(private val out: PrintStream) : TurnObserver {
                 out.flush()
             }
             is TurnEvent.Started, is TurnEvent.ThinkingDelta -> Unit
+            // Tool calls are not shown yet.
+            is TurnEvent.ToolStarted, is TurnEvent.ToolFinished -> Unit
         }
     }
 }
