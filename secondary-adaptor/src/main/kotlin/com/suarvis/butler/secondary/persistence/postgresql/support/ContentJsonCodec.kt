@@ -34,9 +34,14 @@ sealed class BlockDocument {
     @SerialName("text")
     data class Text(val text: String) : BlockDocument()
 
+    /** [replay] is omitted from the document when null, so rows written before it existed read back unchanged. */
     @Serializable
     @SerialName("thinking")
-    data class Thinking(val thinking: String, val signature: String? = null) : BlockDocument()
+    data class Thinking(
+        val thinking: String,
+        val signature: String? = null,
+        val replay: ReasoningReplayDocument? = null,
+    ) : BlockDocument()
 
     @Serializable
     @SerialName("tool_use")
@@ -51,6 +56,14 @@ sealed class BlockDocument {
         @SerialName("is_error") val isError: Boolean = false,
     ) : BlockDocument()
 }
+
+/** Provider-bound reasoning data kept beside a thinking block. The provider is stored by its id. */
+@Serializable
+data class ReasoningReplayDocument(
+    val provider: String,
+    @SerialName("item_id") val itemId: String? = null,
+    val payload: String,
+)
 
 @Serializable
 data class UsageDocument(

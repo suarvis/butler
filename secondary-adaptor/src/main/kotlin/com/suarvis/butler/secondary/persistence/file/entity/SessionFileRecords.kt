@@ -63,9 +63,25 @@ sealed interface BlockRecord
 @SerialName("text")
 data class TextBlockRecord(val text: String) : BlockRecord
 
+/**
+ * [replay] is a Butler addition to Clawcode's thinking block. It is null unless a provider sent
+ * replay data, and a null value is omitted from the line, so files without it are rewritten unchanged.
+ */
 @Serializable
 @SerialName("thinking")
-data class ThinkingBlockRecord(val thinking: String, val signature: String? = null) : BlockRecord
+data class ThinkingBlockRecord(
+    val thinking: String,
+    val signature: String? = null,
+    val replay: ReasoningReplayRecord? = null,
+) : BlockRecord
+
+/** Provider-bound reasoning data kept beside a thinking block. The provider is stored by its id. */
+@Serializable
+data class ReasoningReplayRecord(
+    val provider: String,
+    @SerialName("item_id") val itemId: String? = null,
+    val payload: String,
+)
 
 @Serializable
 @SerialName("tool_use")

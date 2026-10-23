@@ -3,14 +3,18 @@ package com.suarvis.butler.secondary.gateway.impl
 import com.suarvis.butler.core.domain.exception.GatewayException
 import com.suarvis.butler.core.domain.generic.MessageRole
 import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.SessionId
 import com.suarvis.butler.core.domain.generic.TokenUsage
 import com.suarvis.butler.core.domain.generic.WorkspaceRoot
 import com.suarvis.butler.core.domain.session.ContentBlock
+import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.core.domain.session.ReasoningReplay
 import com.suarvis.butler.core.fixtures.SessionFixtures
 import com.suarvis.butler.core.gateway.SessionGateway
 import com.suarvis.butler.secondary.persistence.file.repository.SessionFileRepository
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -19,6 +23,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 import kotlin.io.path.readLines
+import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
 class FileSessionGatewayImplTest : SessionGatewayContract() {
@@ -70,6 +75,42 @@ class FileSessionGatewayImplTest : SessionGatewayContract() {
         assertTrue(lines.first().startsWith("""{"type":"session_meta","version":3,"session_id":"session-1""""), lines.first())
         assertTrue(lines.any { it.contains(""""type":"tool_use"""") })
         assertTrue(lines.last().startsWith("""{"type":"prompt_history""""), lines.last())
+    }
+
+    @Test
+    fun `a thinking block without replay is written as before and rewritten byte for byte`() {
+        val session = SessionFixtures.sessionWithToolRoundTrip(id = "session-3c", workspaceRoot = workspace)
+        gateway().save(session)
+        val file = repository.fileFor(workspace.path, "session-3c")
+        val written = file.readText()
+
+        // Exactly the thinking block Butler 3c wrote: no replay key when there is no replay.
+        assertTrue(written.contains("""{"type":"thinking","thinking":"Need the file first","signature":"sig-1"}"""), written)
+        assertFalse(written.contains("replay"))
+
+        gateway().save(gateway().findById(workspace, session.id)!!)
+
+        assertEquals(written, file.readText())
+    }
+
+    @Test
+    fun `reasoning replay is written inside the thinking block and read back`() {
+        val base = SessionFixtures.sessionWithToolRoundTrip(workspaceRoot = workspace)
+        val replay = ReasoningReplay(ProviderId("openai"), "rs_1", "gAAAAB-encrypted")
+        val session =
+            base.appendUserPrompt("And the licence?", base.updatedAt.plusSeconds(1))
+                .appendAssistantMessage(
+                    ConversationMessage.assistant(listOf(ContentBlock.Thinking("Checked", null, replay), ContentBlock.Text("MIT."))),
+                    base.updatedAt.plusSeconds(2),
+                )
+
+        gateway().save(session)
+
+        val lines = repository.fileFor(workspace.path, session.id.value).readLines()
+        val expectedBlock =
+            """{"type":"thinking","thinking":"Checked","replay":{"provider":"openai","item_id":"rs_1","payload":"gAAAAB-encrypted"}}"""
+        assertTrue(lines.any { it.contains(expectedBlock) }, lines.joinToString(separator = "\n"))
+        assertEquals(session, gateway().findById(workspace, session.id))
     }
 
     @Test

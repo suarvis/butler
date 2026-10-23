@@ -2,8 +2,12 @@ package com.suarvis.butler.secondary.gateway.impl
 
 import com.suarvis.butler.core.domain.generic.BranchName
 import com.suarvis.butler.core.domain.generic.PageRequest
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.SessionId
 import com.suarvis.butler.core.domain.generic.WorkspaceRoot
+import com.suarvis.butler.core.domain.session.ContentBlock
+import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.core.domain.session.ReasoningReplay
 import com.suarvis.butler.core.fixtures.SessionFixtures
 import com.suarvis.butler.core.gateway.SessionGateway
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -28,6 +32,28 @@ abstract class SessionGatewayContract {
     fun `a saved session reads back identical`() {
         val gateway = gateway()
         val original = session("session-a", 0)
+
+        gateway.save(original)
+
+        assertEquals(original, gateway.findById(workspace, original.id))
+    }
+
+    @Test
+    fun `reasoning replay data on thinking blocks reads back identical`() {
+        val gateway = gateway()
+        val base = session("session-a", 0)
+        val openAi = ProviderId("openai")
+        val reply =
+            ConversationMessage.assistant(
+                listOf(
+                    ContentBlock.Thinking("Checked the licence", null, ReasoningReplay(openAi, "rs_1", "gAAAAB-encrypted")),
+                    ContentBlock.Thinking("No item id", "sig-2", ReasoningReplay(openAi, itemId = null, payload = "opaque")),
+                    ContentBlock.Text("It is MIT."),
+                ),
+            )
+        val original =
+            base.appendUserPrompt("And the licence?", base.updatedAt.plusSeconds(1))
+                .appendAssistantMessage(reply, base.updatedAt.plusSeconds(2))
 
         gateway.save(original)
 

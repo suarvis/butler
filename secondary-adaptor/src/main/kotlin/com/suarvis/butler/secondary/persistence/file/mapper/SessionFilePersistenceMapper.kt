@@ -4,6 +4,7 @@ import com.suarvis.butler.core.domain.generic.BranchName
 import com.suarvis.butler.core.domain.generic.JsonText
 import com.suarvis.butler.core.domain.generic.MessageRole
 import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.SessionId
 import com.suarvis.butler.core.domain.generic.TokenUsage
 import com.suarvis.butler.core.domain.generic.ToolCallId
@@ -12,6 +13,7 @@ import com.suarvis.butler.core.domain.generic.WorkspaceRoot
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
 import com.suarvis.butler.core.domain.session.PromptEntry
+import com.suarvis.butler.core.domain.session.ReasoningReplay
 import com.suarvis.butler.core.domain.session.Session
 import com.suarvis.butler.core.domain.session.SessionCompaction
 import com.suarvis.butler.core.domain.session.SessionFork
@@ -21,6 +23,7 @@ import com.suarvis.butler.secondary.persistence.file.entity.ForkRecord
 import com.suarvis.butler.secondary.persistence.file.entity.MessageLineRecord
 import com.suarvis.butler.secondary.persistence.file.entity.MessageRecord
 import com.suarvis.butler.secondary.persistence.file.entity.PromptHistoryLineRecord
+import com.suarvis.butler.secondary.persistence.file.entity.ReasoningReplayRecord
 import com.suarvis.butler.secondary.persistence.file.entity.SessionLineRecord
 import com.suarvis.butler.secondary.persistence.file.entity.SessionMetaRecord
 import com.suarvis.butler.secondary.persistence.file.entity.TextBlockRecord
@@ -95,7 +98,12 @@ object SessionFilePersistenceMapper {
     private fun toRecord(block: ContentBlock): BlockRecord =
         when (block) {
             is ContentBlock.Text -> TextBlockRecord(block.text)
-            is ContentBlock.Thinking -> ThinkingBlockRecord(block.thinking, block.signature)
+            is ContentBlock.Thinking ->
+                ThinkingBlockRecord(
+                    block.thinking,
+                    block.signature,
+                    block.replay?.let { ReasoningReplayRecord(it.provider.value, it.itemId, it.payload) },
+                )
             is ContentBlock.ToolUse -> ToolUseBlockRecord(block.id.value, block.name.value, block.input.value)
             is ContentBlock.ToolResult ->
                 ToolResultBlockRecord(block.toolUseId.value, block.toolName.value, block.output, block.isError)
@@ -114,7 +122,12 @@ object SessionFilePersistenceMapper {
     private fun toDomain(record: BlockRecord): ContentBlock =
         when (record) {
             is TextBlockRecord -> ContentBlock.Text(record.text)
-            is ThinkingBlockRecord -> ContentBlock.Thinking(record.thinking, record.signature)
+            is ThinkingBlockRecord ->
+                ContentBlock.Thinking(
+                    record.thinking,
+                    record.signature,
+                    record.replay?.let { ReasoningReplay(ProviderId(it.provider), it.itemId, it.payload) },
+                )
             is ToolUseBlockRecord -> ContentBlock.ToolUse(ToolCallId(record.id), ToolName(record.name), JsonText(record.input))
             is ToolResultBlockRecord ->
                 ContentBlock.ToolResult(ToolCallId(record.toolUseId), ToolName(record.toolName), record.output, record.isError)

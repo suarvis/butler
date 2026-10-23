@@ -4,6 +4,7 @@ import com.suarvis.butler.core.domain.generic.BranchName
 import com.suarvis.butler.core.domain.generic.JsonText
 import com.suarvis.butler.core.domain.generic.MessageRole
 import com.suarvis.butler.core.domain.generic.ModelId
+import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.SessionId
 import com.suarvis.butler.core.domain.generic.TokenUsage
 import com.suarvis.butler.core.domain.generic.ToolCallId
@@ -12,6 +13,7 @@ import com.suarvis.butler.core.domain.generic.WorkspaceRoot
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
 import com.suarvis.butler.core.domain.session.PromptEntry
+import com.suarvis.butler.core.domain.session.ReasoningReplay
 import com.suarvis.butler.core.domain.session.Session
 import com.suarvis.butler.core.domain.session.SessionCompaction
 import com.suarvis.butler.core.domain.session.SessionFork
@@ -22,6 +24,7 @@ import com.suarvis.butler.secondary.persistence.postgresql.entity.SessionRecord
 import com.suarvis.butler.secondary.persistence.postgresql.entity.SessionSummaryRecord
 import com.suarvis.butler.secondary.persistence.postgresql.support.BlockDocument
 import com.suarvis.butler.secondary.persistence.postgresql.support.ContentJsonCodec
+import com.suarvis.butler.secondary.persistence.postgresql.support.ReasoningReplayDocument
 import com.suarvis.butler.secondary.persistence.postgresql.support.UsageDocument
 import java.nio.file.Path
 
@@ -113,7 +116,12 @@ object SessionPostgresqlPersistenceMapper {
     private fun toDocument(block: ContentBlock): BlockDocument =
         when (block) {
             is ContentBlock.Text -> BlockDocument.Text(block.text)
-            is ContentBlock.Thinking -> BlockDocument.Thinking(block.thinking, block.signature)
+            is ContentBlock.Thinking ->
+                BlockDocument.Thinking(
+                    block.thinking,
+                    block.signature,
+                    block.replay?.let { ReasoningReplayDocument(it.provider.value, it.itemId, it.payload) },
+                )
             is ContentBlock.ToolUse -> BlockDocument.ToolUse(block.id.value, block.name.value, block.input.value)
             is ContentBlock.ToolResult ->
                 BlockDocument.ToolResult(block.toolUseId.value, block.toolName.value, block.output, block.isError)
@@ -122,7 +130,12 @@ object SessionPostgresqlPersistenceMapper {
     private fun toDomain(document: BlockDocument): ContentBlock =
         when (document) {
             is BlockDocument.Text -> ContentBlock.Text(document.text)
-            is BlockDocument.Thinking -> ContentBlock.Thinking(document.thinking, document.signature)
+            is BlockDocument.Thinking ->
+                ContentBlock.Thinking(
+                    document.thinking,
+                    document.signature,
+                    document.replay?.let { ReasoningReplay(ProviderId(it.provider), it.itemId, it.payload) },
+                )
             is BlockDocument.ToolUse -> ContentBlock.ToolUse(ToolCallId(document.id), ToolName(document.name), JsonText(document.input))
             is BlockDocument.ToolResult ->
                 ContentBlock.ToolResult(ToolCallId(document.toolUseId), ToolName(document.toolName), document.output, document.isError)

@@ -142,4 +142,9 @@ class SessionTest {
         assertThrows<DomainValidationException> { ConversationMessage(MessageRole.TOOL, listOf(ContentBlock.Text("x"))) }
         assertThrows<DomainValidationException> { ConversationMessage(MessageRole.USER, emptyList()) }
     }
+
+    @Test
+    fun `thinking blocks carry no replay data unless a provider supplies it`() {
+        assertNull(ContentBlock.Thinking("t", "sig").replay)
+    }
 }
