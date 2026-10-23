@@ -3,6 +3,7 @@ package com.suarvis.butler.core.domain.exception
 import com.suarvis.butler.core.domain.budget.BudgetBreach
 import com.suarvis.butler.core.domain.generic.ModelId
 import com.suarvis.butler.core.domain.generic.ProviderId
+import com.suarvis.butler.core.domain.generic.ToolName
 import com.suarvis.butler.core.domain.session.SessionReference
 
 /**
@@ -26,6 +27,13 @@ class TranscriptIntegrityException(message: String) : ButlerException(message)
 
 /** No configured provider can serve the requested model, so there is nothing to call. */
 class UnknownModelException(val model: ModelId, reason: String) : ButlerException("Unknown model '$model': $reason")
+
+/**
+ * A tool call's input could not be decoded: malformed JSON, a missing or mistyped field, or a
+ * path outside the workspace. The reason names the field that is wrong, so the model can be told
+ * exactly what to fix.
+ */
+class InvalidToolInputException(val tool: ToolName, reason: String) : ButlerException("Invalid input for $tool: $reason")
 
 /**
  * The turn stopped because a budget would be exceeded and the user did not approve going over

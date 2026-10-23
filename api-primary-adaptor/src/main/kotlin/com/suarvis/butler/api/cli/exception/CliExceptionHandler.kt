@@ -10,6 +10,7 @@ import com.suarvis.butler.core.domain.exception.BudgetExceededException
 import com.suarvis.butler.core.domain.exception.ButlerException
 import com.suarvis.butler.core.domain.exception.DomainValidationException
 import com.suarvis.butler.core.domain.exception.GatewayException
+import com.suarvis.butler.core.domain.exception.InvalidToolInputException
 import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.exception.ModelProviderException.Failure
 import com.suarvis.butler.core.domain.exception.SessionNotFoundException
@@ -59,6 +60,7 @@ class CliExceptionHandler(
             is SessionNotFoundException ->
                 CliFailure("session_not_found", error.messageOrName(), "Run `butler session list` to see saved sessions.", ExitCodes.RUNTIME)
             is TranscriptIntegrityException -> CliFailure("transcript_integrity", error.messageOrName(), null, ExitCodes.RUNTIME)
+            is InvalidToolInputException -> CliFailure("invalid_tool_input", error.messageOrName(), null, ExitCodes.RUNTIME)
             is GatewayException ->
                 CliFailure(
                     "persistence_error",
