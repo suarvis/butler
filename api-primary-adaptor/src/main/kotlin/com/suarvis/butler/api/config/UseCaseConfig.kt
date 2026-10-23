@@ -1,5 +1,6 @@
 package com.suarvis.butler.api.config
 
+import com.suarvis.butler.core.domain.turn.TurnSettings
 import com.suarvis.butler.core.gateway.BudgetGateway
 import com.suarvis.butler.core.gateway.IdentityGateway
 import com.suarvis.butler.core.gateway.ModelCatalogGateway
@@ -15,6 +16,7 @@ import com.suarvis.butler.core.usecase.session.GetSessionUseCase
 import com.suarvis.butler.core.usecase.session.ListSessionsUseCase
 import com.suarvis.butler.core.usecase.session.StartSessionUseCase
 import com.suarvis.butler.core.usecase.turn.RunTurnUseCase
+import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import java.time.Clock
@@ -24,6 +26,7 @@ import java.time.Clock
  * Gateways are injected by interface; their implementations come from secondary-adaptor.
  */
 @Configuration(proxyBeanMethods = false)
+@EnableConfigurationProperties(TurnProperties::class)
 class UseCaseConfig {
     /** System time zone: budgets reset at the start of the user's own calendar month. */
     @Bean
@@ -65,7 +68,19 @@ class UseCaseConfig {
         rateLimits: RateLimitGateway,
         budgets: BudgetGateway,
         clock: Clock,
-    ) = RunTurnUseCase(getSession, sessions, identity, models, catalog, usage, rateLimits, budgets, clock)
+        turn: TurnProperties,
+    ) = RunTurnUseCase(
+        getSession,
+        sessions,
+        identity,
+        models,
+        catalog,
+        usage,
+        rateLimits,
+        budgets,
+        clock,
+        TurnSettings(toolsEnabled = turn.enabled),
+    )
 
     @Bean
     fun getUsageReportUseCase(
