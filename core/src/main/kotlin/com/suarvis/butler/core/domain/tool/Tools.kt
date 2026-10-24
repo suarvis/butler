@@ -70,8 +70,12 @@ sealed interface ToolInvocation {
     /** No sandbox overrides: Butler's policy decides the sandbox, not the model. */
     data class Bash(val command: String, val timeout: Duration? = null, val description: String? = null) : ToolInvocation
 
-    /** MCP and later tools: core passes the input through untouched. */
-    data class External(val tool: ToolName, val input: JsonText) : ToolInvocation
+    /**
+     * MCP and later tools: core passes the input through untouched. [subject] is the string a
+     * permission rule's argument is matched against, picked from the input by the adaptor that
+     * decoded it, because core does not parse JSON; null means the whole input is matched.
+     */
+    data class External(val tool: ToolName, val input: JsonText, val subject: String? = null) : ToolInvocation
 }
 
 /** What a tool hands back to the model. A failure is an outcome the model can react to, never an exception. */

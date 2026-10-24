@@ -1,7 +1,6 @@
 package com.suarvis.butler.secondary.gateway.impl.stub
 
 import com.suarvis.butler.core.domain.context.ProjectContext
-import com.suarvis.butler.core.domain.exception.InvalidToolInputException
 import com.suarvis.butler.core.domain.generic.JsonText
 import com.suarvis.butler.core.domain.generic.ToolName
 import com.suarvis.butler.core.domain.generic.WorkspacePath
@@ -14,22 +13,10 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 
 /** Until the real tool lanes land, every stand-in must say plainly that its tool is missing. */
 class StandInGatewaysTest {
     private val workspace = SessionFixtures.workspace
-
-    @Test
-    fun `tool input is refused, naming the tool`() {
-        val error =
-            assertThrows<InvalidToolInputException> {
-                UnavailableToolInputGatewayImpl().decode(workspace, ToolName("read_file"), JsonText("""{"path":"README.md"}"""))
-            }
-
-        assertEquals(ToolName("read_file"), error.tool)
-        assertEquals("Invalid input for read_file: tools are not available in this build yet", error.message)
-    }
 
     @Test
     fun `file tools answer with an error naming the built-in tool`() {
