@@ -2,12 +2,16 @@ package com.suarvis.butler.api.config
 
 import com.suarvis.butler.core.domain.turn.TurnSettings
 import com.suarvis.butler.core.gateway.BudgetGateway
+import com.suarvis.butler.core.gateway.CommandGateway
 import com.suarvis.butler.core.gateway.IdentityGateway
+import com.suarvis.butler.core.gateway.McpGateway
 import com.suarvis.butler.core.gateway.ModelCatalogGateway
 import com.suarvis.butler.core.gateway.ModelGateway
 import com.suarvis.butler.core.gateway.RateLimitGateway
 import com.suarvis.butler.core.gateway.SessionGateway
+import com.suarvis.butler.core.gateway.ToolInputGateway
 import com.suarvis.butler.core.gateway.UsageGateway
+import com.suarvis.butler.core.gateway.WorkspaceGateway
 import com.suarvis.butler.core.usecase.budget.GetUsageReportUseCase
 import com.suarvis.butler.core.usecase.model.ResolveModelUseCase
 import com.suarvis.butler.core.usecase.session.DeleteSessionUseCase
@@ -15,6 +19,7 @@ import com.suarvis.butler.core.usecase.session.ForkSessionUseCase
 import com.suarvis.butler.core.usecase.session.GetSessionUseCase
 import com.suarvis.butler.core.usecase.session.ListSessionsUseCase
 import com.suarvis.butler.core.usecase.session.StartSessionUseCase
+import com.suarvis.butler.core.usecase.turn.RunToolCallUseCase
 import com.suarvis.butler.core.usecase.turn.RunTurnUseCase
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
@@ -88,4 +93,12 @@ class UseCaseConfig {
         budgets: BudgetGateway,
         clock: Clock,
     ) = GetUsageReportUseCase(usage, budgets, clock)
+
+    @Bean
+    fun runToolCallUseCase(
+        inputs: ToolInputGateway,
+        files: WorkspaceGateway,
+        commands: CommandGateway,
+        mcp: McpGateway,
+    ) = RunToolCallUseCase(inputs, files, commands, mcp)
 }
