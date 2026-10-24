@@ -10,6 +10,7 @@ import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelResponse
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.core.domain.tool.ToolDefinition
 import com.suarvis.butler.secondary.client.openai.dto.OpenAiCompletion
 import com.suarvis.butler.secondary.client.openai.dto.OpenAiRequestOptions
 import kotlinx.serialization.json.JsonArray
@@ -33,6 +34,8 @@ object OpenAiClientMapper {
             // Unknown limits are left to the server: a guess above a model's limit is rejected outright.
             request.model.maxOutputTokens?.let { put(options.maxTokensParameter, it) }
             put("messages", JsonArray(toWireMessages(request)))
+            // Left out when no tools are offered: some compatible servers reject an empty list. No tool_choice: the default is auto.
+            if (request.tools.isNotEmpty()) put("tools", JsonArray(request.tools.map(::toWireTool)))
         }
 
     fun toResponse(completion: OpenAiCompletion): ModelResponse =
@@ -112,6 +115,16 @@ object OpenAiClientMapper {
             }
         }
     }
+
+    private fun toWireTool(tool: ToolDefinition): JsonObject =
+        buildJsonObject {
+            put("type", "function")
+            putJsonObject("function") {
+                put("name", tool.name.value)
+                put("description", tool.description)
+                put("parameters", OpenAiToolSchemaClientMapper.toParameters(tool.inputSchema))
+            }
+        }
 
     private fun textMessage(role: String, text: String): JsonObject =
         buildJsonObject {

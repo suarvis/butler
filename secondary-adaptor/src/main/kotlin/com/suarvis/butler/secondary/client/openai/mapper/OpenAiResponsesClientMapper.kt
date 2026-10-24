@@ -10,6 +10,7 @@ import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelResponse
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.core.domain.tool.ToolDefinition
 import com.suarvis.butler.secondary.client.openai.dto.ResponsesOutputItem
 import com.suarvis.butler.secondary.client.openai.dto.ResponsesResult
 import kotlinx.serialization.json.JsonArray
@@ -32,6 +33,8 @@ object OpenAiResponsesClientMapper {
             // Unknown limits are left to the provider: a guess above a model's limit is rejected outright.
             request.model.maxOutputTokens?.let { put("max_output_tokens", it) }
             put("input", JsonArray(toInput(request)))
+            // Left out when no tools are offered, so such requests stay as they were. No tool_choice: the default is auto.
+            if (request.tools.isNotEmpty()) put("tools", JsonArray(request.tools.map(::toWireTool)))
         }
 
     fun toResponse(result: ResponsesResult): ModelResponse =
@@ -96,6 +99,19 @@ object OpenAiResponsesClientMapper {
                         put("output", if (result.isError) "[error] ${result.output}" else result.output)
                     }
                 }
+        }
+
+    /**
+     * Responses tools are flat, with no `function` wrapper. `strict: false` because leaving it out makes
+     * OpenAI attempt strict mode, which Butler's schemas with optional fields (such as `offset`) do not meet.
+     */
+    private fun toWireTool(tool: ToolDefinition): JsonObject =
+        buildJsonObject {
+            put("type", "function")
+            put("name", tool.name.value)
+            put("description", tool.description)
+            put("parameters", OpenAiToolSchemaClientMapper.toParameters(tool.inputSchema))
+            put("strict", false)
         }
 
     private fun message(role: String, text: String): JsonObject =

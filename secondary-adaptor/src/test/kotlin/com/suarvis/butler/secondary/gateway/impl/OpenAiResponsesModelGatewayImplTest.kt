@@ -16,6 +16,7 @@ import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelStreamEvent
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.core.domain.tool.BuiltInTools
 import com.suarvis.butler.secondary.client.FakeProviderServer
 import com.suarvis.butler.secondary.client.OpenAiResponsesStreams
 import com.suarvis.butler.secondary.client.openai.OpenAiResponsesClient
@@ -92,6 +93,34 @@ class OpenAiResponsesModelGatewayImplTest {
         gateway().stream(request(ConversationMessage.userText("hi"), model = grok)) { }
 
         assertNull(lastBody()["max_output_tokens"])
+    }
+
+    @Test
+    fun `offers tools as flat, non-strict functions with the schema as a JSON object`() {
+        server.enqueueNamedEvents(*OpenAiResponsesStreams.textAnswer("ok"))
+
+        gateway().stream(request(ConversationMessage.userText("hi")).copy(tools = listOf(BuiltInTools.READ_FILE, BuiltInTools.BASH))) { }
+
+        val body = lastBody()
+        val tools = body["tools"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("function", "function"), tools.map { it["type"]!!.jsonPrimitive.content })
+        assertEquals(listOf("read_file", "bash"), tools.map { it["name"]!!.jsonPrimitive.content })
+        assertEquals(setOf("type", "name", "description", "parameters", "strict"), tools[0].keys)
+        assertEquals(BuiltInTools.READ_FILE.description, tools[0]["description"]!!.jsonPrimitive.content)
+        assertEquals(Json.parseToJsonElement(BuiltInTools.READ_FILE.inputSchema.value), tools[0]["parameters"])
+        assertEquals(Json.parseToJsonElement(BuiltInTools.BASH.inputSchema.value), tools[1]["parameters"])
+        assertTrue(tools.all { !it["strict"]!!.jsonPrimitive.boolean })
+        assertNull(body["tool_choice"])
+        assertFalse(body["store"]!!.jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun `a request without tools has no tools field`() {
+        server.enqueueNamedEvents(*OpenAiResponsesStreams.textAnswer("ok"))
+
+        gateway().stream(request(ConversationMessage.userText("hi"))) { }
+
+        assertNull(lastBody()["tools"])
     }
 
     @Test

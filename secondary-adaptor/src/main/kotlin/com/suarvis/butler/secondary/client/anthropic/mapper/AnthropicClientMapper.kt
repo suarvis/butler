@@ -10,12 +10,14 @@ import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelResponse
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.core.domain.tool.ToolDefinition
 import com.suarvis.butler.secondary.client.anthropic.dto.AnthropicBlock
 import com.suarvis.butler.secondary.client.anthropic.dto.AnthropicMessage
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 
 /**
@@ -33,6 +35,8 @@ object AnthropicClientMapper {
             put("stream", true)
             put("system", request.systemPrompt)
             put("messages", JsonArray(toWireMessages(request.messages)))
+            // Left out when no tools are offered, so such requests stay as they were. No tool_choice: the API defaults to auto.
+            if (request.tools.isNotEmpty()) put("tools", JsonArray(request.tools.map(::toWireTool)))
         }
 
     fun toResponse(message: AnthropicMessage): ModelResponse =
@@ -113,6 +117,17 @@ object AnthropicClientMapper {
                     put("content", block.output)
                     put("is_error", block.isError)
                 }
+        }
+
+    /**
+     * The schema goes to Anthropic unchanged, as a JSON object rather than a string. A schema that is
+     * not an object is a bug where the tool was defined, so it fails here instead of being sent.
+     */
+    private fun toWireTool(tool: ToolDefinition): JsonObject =
+        buildJsonObject {
+            put("name", tool.name.value)
+            put("description", tool.description)
+            put("input_schema", Json.parseToJsonElement(tool.inputSchema.value).jsonObject)
         }
 
     private fun toDomain(block: AnthropicBlock): ContentBlock =

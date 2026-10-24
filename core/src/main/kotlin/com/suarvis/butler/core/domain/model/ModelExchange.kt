@@ -12,7 +12,7 @@ data class ModelRequest(
     val model: ModelProfile,
     val systemPrompt: String,
     val messages: List<ConversationMessage>,
-    /** Tools offered for this call; empty until lane A's tool loop, and provider mappers ignore it until lane B. */
+    /** Tools offered for this call, sent in each provider's own shape; empty sends none. Lane A's loop fills it. */
     val tools: List<ToolDefinition> = emptyList(),
 ) {
     init {

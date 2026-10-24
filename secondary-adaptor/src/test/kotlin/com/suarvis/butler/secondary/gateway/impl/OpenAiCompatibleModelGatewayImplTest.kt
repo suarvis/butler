@@ -16,6 +16,7 @@ import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelStreamEvent
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.core.domain.tool.BuiltInTools
 import com.suarvis.butler.secondary.client.FakeProviderServer
 import com.suarvis.butler.secondary.client.OpenAiStreams
 import com.suarvis.butler.secondary.client.openai.OpenAiChatClient
@@ -112,6 +113,37 @@ class OpenAiCompatibleModelGatewayImplTest {
         assertNull(first["stream_options"])
         assertEquals("llama3.2", second["model"]!!.jsonPrimitive.content)
         assertFalse(second.keys.any { it.startsWith("max_") }, second.toString())
+    }
+
+    @Test
+    fun `offers tools as functions with the schema as a JSON object`() {
+        server.enqueueDataEvents(*OpenAiStreams.textAnswer("ok"))
+
+        gateway().stream(request(ConversationMessage.userText("hi")).copy(tools = listOf(BuiltInTools.READ_FILE, BuiltInTools.BASH))) { }
+
+        val body = lastBody()
+        val tools = body["tools"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("function", "function"), tools.map { it["type"]!!.jsonPrimitive.content })
+        assertEquals(setOf("type", "function"), tools[0].keys)
+        val functions = tools.map { it["function"]!!.jsonObject }
+        assertEquals(listOf("read_file", "bash"), functions.map { it["name"]!!.jsonPrimitive.content })
+        assertEquals(setOf("name", "description", "parameters"), functions[0].keys)
+        assertEquals(BuiltInTools.BASH.description, functions[1]["description"]!!.jsonPrimitive.content)
+        assertEquals(Json.parseToJsonElement(BuiltInTools.READ_FILE.inputSchema.value), functions[0]["parameters"])
+        assertEquals(Json.parseToJsonElement(BuiltInTools.BASH.inputSchema.value), functions[1]["parameters"])
+        assertNull(body["tool_choice"])
+        // The server settings still apply next to tools.
+        assertEquals(4096, body["max_completion_tokens"]!!.jsonPrimitive.int)
+        assertTrue(body["stream_options"]!!.jsonObject["include_usage"]!!.jsonPrimitive.boolean)
+    }
+
+    @Test
+    fun `a request without tools has no tools field`() {
+        server.enqueueDataEvents(*OpenAiStreams.textAnswer("ok"))
+
+        gateway().stream(request(ConversationMessage.userText("hi"))) { }
+
+        assertNull(lastBody()["tools"])
     }
 
     @Test

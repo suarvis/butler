@@ -16,6 +16,7 @@ import com.suarvis.butler.core.domain.model.ModelRequest
 import com.suarvis.butler.core.domain.model.ModelStreamEvent
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.ConversationMessage
+import com.suarvis.butler.core.domain.tool.BuiltInTools
 import com.suarvis.butler.secondary.client.AnthropicStreams
 import com.suarvis.butler.secondary.client.FakeProviderServer
 import com.suarvis.butler.secondary.client.anthropic.AnthropicMessagesClient
@@ -29,6 +30,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -78,6 +80,31 @@ class AnthropicModelGatewayImplTest {
         assertEquals(2048, body["max_tokens"]!!.jsonPrimitive.int)
         assertTrue(body["stream"]!!.jsonPrimitive.boolean)
         assertEquals("You are Butler.", body["system"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `offers tools with name, description and the schema as a JSON object`() {
+        server.enqueueNamedEvents(*AnthropicStreams.textAnswer("ok"))
+
+        gateway().stream(request(ConversationMessage.userText("hi")).copy(tools = listOf(BuiltInTools.READ_FILE, BuiltInTools.BASH))) { }
+
+        val body = lastBody()
+        val tools = body["tools"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(listOf("read_file", "bash"), tools.map { it["name"]!!.jsonPrimitive.content })
+        assertEquals(setOf("name", "description", "input_schema"), tools[0].keys)
+        assertEquals(BuiltInTools.READ_FILE.description, tools[0]["description"]!!.jsonPrimitive.content)
+        assertEquals(Json.parseToJsonElement(BuiltInTools.READ_FILE.inputSchema.value), tools[0]["input_schema"])
+        assertEquals(Json.parseToJsonElement(BuiltInTools.BASH.inputSchema.value), tools[1]["input_schema"])
+        assertNull(body["tool_choice"])
+    }
+
+    @Test
+    fun `a request without tools has no tools field`() {
+        server.enqueueNamedEvents(*AnthropicStreams.textAnswer("ok"))
+
+        gateway().stream(request(ConversationMessage.userText("hi"))) { }
+
+        assertNull(lastBody()["tools"])
     }
 
     @Test
