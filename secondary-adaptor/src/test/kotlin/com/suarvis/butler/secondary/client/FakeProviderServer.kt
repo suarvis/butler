@@ -1,12 +1,16 @@
 package com.suarvis.butler.secondary.client
 
 import com.sun.net.httpserver.HttpServer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 import java.net.InetSocketAddress
 import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * Local stand-in for a model provider's HTTP API: replays scripted responses (plain or as
- * Server-Sent Events) and records every request, so clients are tested without network or cost.
+ * Server-Sent Events) and records every request in arrival order, so clients are tested without
+ * network or cost. [ScriptedReply] scripts text or tool calls in any of the three dialects.
  */
 class FakeProviderServer : AutoCloseable {
     data class Recorded(val path: String, val headers: Map<String, String>, val body: String)
@@ -44,6 +48,18 @@ class FakeProviderServer : AutoCloseable {
     fun enqueueDataEvents(vararg data: String): FakeProviderServer =
         enqueue(Scripted(200, data.joinToString(separator = "") { "data: $it\n\n" }, SSE))
 
+    /** [replies] in order, each streamed as [dialect] streams it: for example tool calls, then the final text. */
+    fun enqueue(dialect: ProviderDialect, vararg replies: ScriptedReply): FakeProviderServer =
+        apply { replies.forEach { enqueue(Scripted(200, dialect.sse(it), SSE)) } }
+
+    /** One reply making these tool calls, streamed as [dialect] streams it. */
+    fun enqueueToolCalls(dialect: ProviderDialect, vararg calls: ScriptedToolCall): FakeProviderServer =
+        enqueue(dialect, ScriptedReply.ToolCalls(calls.toList()))
+
+    /** Request bodies parsed as JSON, in the order they arrived; [path] keeps only one endpoint's. */
+    fun requestBodies(path: String? = null): List<JsonObject> =
+        requests.filter { path == null || it.path == path }.map { Json.parseToJsonElement(it.body).jsonObject }
+
     override fun close() = server.stop(0)
 
     private companion object {
@@ -63,6 +79,10 @@ object AnthropicStreams {
             add("message_delta" to """{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":$outputTokens}}""")
             add("message_stop" to """{"type":"message_stop"}""")
         }.toTypedArray()
+
+    /** `tool_use` blocks with `input_json_delta` pieces and stop reason `tool_use`; see [ScriptedStreams.anthropic]. */
+    fun toolUse(vararg calls: ScriptedToolCall, text: String = "", usage: ScriptedUsage = ScriptedUsage()): Array<Pair<String, String>> =
+        ScriptedStreams.anthropic(ScriptedReply.ToolCalls(calls.toList(), text, usage)).toTypedArray()
 }
 
 /** Scripted OpenAI Chat Completions streams. */
@@ -81,6 +101,10 @@ object OpenAiStreams {
             add(usage(prompt, completion, cached))
             add("[DONE]")
         }.toTypedArray()
+
+    /** `delta.tool_calls` with arguments in pieces and finish reason `tool_calls`; see [ScriptedStreams.chatCompletions]. */
+    fun toolCalls(vararg calls: ScriptedToolCall, text: String = "", usage: ScriptedUsage = ScriptedUsage()): Array<String> =
+        ScriptedStreams.chatCompletions(ScriptedReply.ToolCalls(calls.toList(), text, usage)).toTypedArray()
 }
 
 /** Scripted OpenAI Responses API streams (named events, as OpenAI and xAI send them). */
@@ -108,4 +132,8 @@ object OpenAiResponsesStreams {
             add(event("response.output_item.done", """"output_index":0,"item":${message(chunks.joinToString(""))}"""))
             add(completed("[${message(chunks.joinToString(""))}]", input, outputTokens, cached))
         }.toTypedArray()
+
+    /** `function_call` output items with streamed arguments, ending with `response.completed`; see [ScriptedStreams.responses]. */
+    fun functionCalls(vararg calls: ScriptedToolCall, text: String = "", usage: ScriptedUsage = ScriptedUsage()): Array<Pair<String, String>> =
+        ScriptedStreams.responses(ScriptedReply.ToolCalls(calls.toList(), text, usage)).toTypedArray()
 }
