@@ -54,7 +54,7 @@ class ResumeRunner(
             is SlashCommand.SessionDelete -> current.also { sessions.delete(invocation, SessionReference.parse(command.target)) }
             SlashCommand.Version -> current.also { printVersion(invocation) }
             SlashCommand.Help -> current.also { printHelp(invocation) }
-            is SlashCommand.Model, SlashCommand.Clear, SlashCommand.Exit ->
+            is SlashCommand.Model, is SlashCommand.Permissions, SlashCommand.Clear, SlashCommand.Exit ->
                 throw CliUsageException(
                     "unsupported_resumed_command",
                     "This slash command only works in the interactive REPL",

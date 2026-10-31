@@ -1,6 +1,8 @@
 package com.suarvis.butler.api.cli.repl
 
+import com.suarvis.butler.api.cli.command.PermissionFlags
 import com.suarvis.butler.api.cli.exception.CliUsageException
+import com.suarvis.butler.core.domain.permission.PermissionMode
 
 /**
  * Slash commands usable with `--resume` today and inside the REPL later. Names and arguments
@@ -31,6 +33,9 @@ sealed interface SlashCommand {
     /** Interactive only: show or change the model for the following turns. */
     data class Model(val name: String?) : SlashCommand
 
+    /** Interactive only: show the permission mode, or switch to [mode] for the following turns. */
+    data class Permissions(val mode: PermissionMode?) : SlashCommand
+
     /** Interactive only: start a fresh session. */
     data object Clear : SlashCommand
 
@@ -41,7 +46,8 @@ sealed interface SlashCommand {
 /** Splits `/status /export notes.md /session fork try-b` into commands with their arguments. */
 object SlashCommandParser {
     const val SUPPORTED = "/status, /usage, /export [file], /session [list|exists ID|switch ID|fork [branch]|delete ID], /version, /help"
-    const val INTERACTIVE_ONLY = "/model [name], /clear, /exit"
+    const val PERMISSION_MODES = "read-only|workspace-write|danger-full-access|prompt|allow"
+    const val INTERACTIVE_ONLY = "/model [name], /permissions [$PERMISSION_MODES], /clear, /exit"
 
     fun parse(tokens: List<String>): List<SlashCommand> {
         if (tokens.isEmpty()) return emptyList()
@@ -64,6 +70,7 @@ object SlashCommandParser {
             "help" -> noArguments(name, args, SlashCommand.Help)
             "session" -> session(args)
             "model" -> SlashCommand.Model(atMostOne(name, args))
+            "permissions" -> SlashCommand.Permissions(atMostOne(name, args)?.let { permissionMode(it) })
             "clear" -> SlashCommand.Clear
             "exit", "quit" -> noArguments(name, args, SlashCommand.Exit)
             else -> throw CliUsageException("unsupported_resumed_command", "Unknown or unsupported slash command '/$name'", "Supported: $SUPPORTED")
@@ -81,6 +88,18 @@ object SlashCommandParser {
             else -> throw CliUsageException("unsupported_resumed_command", "Unknown /session action '$action'", "Supported: $SUPPORTED")
         }
     }
+
+    /**
+     * Accepts what `--permission-mode` accepts, aliases included; Clawcode's parser takes only its
+     * three tier labels here. The message is Clawcode's, naming Butler's five modes.
+     */
+    private fun permissionMode(label: String): PermissionMode =
+        PermissionFlags.parseMode(label)
+            ?: throw CliUsageException(
+                "invalid_permission_mode",
+                "Unsupported /permissions mode '$label'. Use read-only, workspace-write, danger-full-access, prompt, or allow.",
+                "Usage: /permissions [$PERMISSION_MODES]",
+            )
 
     private fun noArguments(name: String, args: List<String>, command: SlashCommand): SlashCommand {
         if (args.isNotEmpty()) throw CliUsageException("cli_parse", "/$name takes no arguments, got: ${args.joinToString(" ")}")

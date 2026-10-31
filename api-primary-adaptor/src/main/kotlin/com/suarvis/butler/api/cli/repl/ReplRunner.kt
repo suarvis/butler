@@ -9,12 +9,15 @@ import com.suarvis.butler.api.cli.action.SessionActions
 import com.suarvis.butler.api.cli.action.UsageActions
 import com.suarvis.butler.api.cli.command.CliInvocation
 import com.suarvis.butler.api.cli.exception.CliExceptionHandler
+import com.suarvis.butler.api.cli.prompt.CliToolApprovers
 import com.suarvis.butler.api.cli.prompt.CliTurnApprovers
 import com.suarvis.butler.core.domain.generic.BranchName
 import com.suarvis.butler.core.domain.generic.ModelId
 import com.suarvis.butler.core.domain.generic.PageRequest
 import com.suarvis.butler.core.domain.model.ModelProfile
+import com.suarvis.butler.core.domain.permission.PermissionMode
 import com.suarvis.butler.core.domain.session.SessionReference
+import com.suarvis.butler.core.domain.turn.ToolApprover
 import com.suarvis.butler.core.domain.turn.TurnApprover
 import com.suarvis.butler.core.usecase.model.ResolveModelUseCase
 import org.springframework.stereotype.Component
@@ -31,15 +34,22 @@ class ReplRunner(
     private val usage: UsageActions,
     private val resolveModel: ResolveModelUseCase,
     private val approvers: CliTurnApprovers,
+    private val toolApprovers: CliToolApprovers,
     private val exceptions: CliExceptionHandler,
     private val console: CliConsole,
 ) {
-    private class State(var session: SessionReference.ById?, var invocation: CliInvocation, val approver: TurnApprover)
+    private class State(
+        var session: SessionReference.ById?,
+        var invocation: CliInvocation,
+        val approver: TurnApprover,
+        val toolApprover: ToolApprover,
+    )
 
     fun run(invocation: CliInvocation, resume: SessionReference? = null): Int {
         val interactive = console.interactive
-        // One approver for the whole session: approving "over budget" once covers the following prompts.
-        val state = State(null, invocation, approvers.create(invocation))
+        // One approver of each kind for the whole session: approving "over budget" or "allow for this
+        // session" once covers the following prompts.
+        val state = State(null, invocation, approvers.create(invocation), toolApprovers.create(invocation))
         if (resume != null) {
             val session = sessions.load(invocation, resume)
             state.session = SessionReference.ById(session.id)
@@ -67,7 +77,7 @@ class ReplRunner(
     }
 
     private fun prompt(state: State, text: String): Boolean {
-        val summary = prompts.run(state.invocation, text, state.session, compact = false, approver = state.approver)
+        val summary = prompts.run(state.invocation, text, state.session, compact = false, approver = state.approver, toolApprover = state.toolApprover)
         state.session = SessionReference.ById(summary.session.id)
         return true
     }
@@ -82,6 +92,7 @@ class ReplRunner(
                     say(state, "Started a fresh session; the next prompt opens it.")
                 }
                 is SlashCommand.Model -> model(state, command.name)
+                is SlashCommand.Permissions -> permissions(state, command.mode)
                 SlashCommand.Status -> sessions.status(invocation, state.session?.let { sessions.load(invocation, it) })
                 SlashCommand.Usage -> usage.report(invocation.format)
                 is SlashCommand.Export -> sessions.export(invocation, sessions.load(invocation, current(state)), command.path)
@@ -124,11 +135,52 @@ class ReplRunner(
         say(state, "Model set to ${target.id} (${target.provider.id}) for the next prompts.$providerChange")
     }
 
+    /**
+     * `/permissions` shows the mode the next tool calls run in; `/permissions MODE` switches to it for
+     * the rest of the session, as Clawcode's `set_permissions` does. Asking for the current mode
+     * shows the report again instead of a switch.
+     */
+    private fun permissions(state: State, mode: PermissionMode?) {
+        val current = state.invocation.permissionMode
+        if (mode == null || mode == current) {
+            say(state, permissionsReport(current))
+            return
+        }
+        state.invocation = state.invocation.copy(permissionMode = mode)
+        say(state, permissionsSwitchReport(current, mode))
+    }
+
     private fun currentModel(state: State): ModelProfile =
         resolveModel.execute(state.invocation.model ?: state.session?.let { sessions.load(state.invocation, it).model })
 
     /** The open session, or the latest one when no prompt has been sent yet. */
     private fun current(state: State): SessionReference = state.session ?: SessionReference.Latest
+
+    /**
+     * Clawcode's `format_permissions_report`, with Butler's two extra modes listed after its three.
+     * Their descriptions are Butler's: Clawcode's report does not list them.
+     */
+    private fun permissionsReport(mode: PermissionMode): String {
+        val modes =
+            PERMISSION_MODE_DESCRIPTIONS.map { (each, description) ->
+                val marker = if (each == mode) "● current" else "○ available"
+                "  ${each.cliName.padEnd(18)} ${marker.padEnd(11)} $description"
+            }
+        val header = listOf("Permissions", "  Active mode      ${mode.cliName}", "  Mode status      live session default", "", "Modes")
+        val usage = listOf("", "Usage", "  Inspect current mode with /permissions", "  Switch modes with /permissions <mode>")
+        return (header + modes + usage).joinToString("\n")
+    }
+
+    /** Clawcode's `format_permissions_switch_report`. */
+    private fun permissionsSwitchReport(previous: PermissionMode, next: PermissionMode): String =
+        """
+            |Permissions updated
+            |  Result           mode switched
+            |  Previous mode    ${previous.cliName}
+            |  Active mode      ${next.cliName}
+            |  Applies to       subsequent tool calls
+            |  Usage            /permissions to inspect current mode
+        """.trimMargin()
 
     /** Conversational messages are text only; in JSON mode stdout carries only JSON objects. */
     private fun say(state: State, message: String) {
@@ -136,5 +188,16 @@ class ReplRunner(
             console.out.println(message)
             console.out.flush()
         }
+    }
+
+    private companion object {
+        val PERMISSION_MODE_DESCRIPTIONS =
+            linkedMapOf(
+                PermissionMode.READ_ONLY to "Read/search tools only",
+                PermissionMode.WORKSPACE_WRITE to "Edit files inside the workspace",
+                PermissionMode.DANGER_FULL_ACCESS to "Unrestricted tool access",
+                PermissionMode.PROMPT to "Read freely; ask before anything else",
+                PermissionMode.ALLOW to "Every tool call runs without asking",
+            )
     }
 }
