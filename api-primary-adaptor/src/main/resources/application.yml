@@ -112,3 +112,13 @@ butler:
   # gate M1 turns them on.
   tools:
     enabled: false
+
+  # Permission rules for tool calls, in Clawcode's syntax: tool, tool(exact) or tool(prefix:*), for
+  # example "read_file", "bash(git status)", "bash(rm:*)" or "write_file(.github/:*)". Deny wins,
+  # then ask, then allow; with no rules the permission mode alone decides. A rule that does not
+  # parse is an error naming it, never skipped. From the environment use the indexed form, since a
+  # rule may contain a comma: BUTLER_PERMISSIONS_DENY_0='bash(rm:*)'.
+  permissions:
+    allow: []
+    deny: []
+    ask: []
