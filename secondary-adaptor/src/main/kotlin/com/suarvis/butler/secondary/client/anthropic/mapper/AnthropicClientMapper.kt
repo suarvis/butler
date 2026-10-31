@@ -115,7 +115,8 @@ object AnthropicClientMapper {
                     put("type", "tool_result")
                     put("tool_use_id", block.toolUseId.value)
                     put("content", block.output)
-                    put("is_error", block.isError)
+                    // Only when true, as Clawcode writes it (false is the API's default).
+                    if (block.isError) put("is_error", true)
                 }
         }
 

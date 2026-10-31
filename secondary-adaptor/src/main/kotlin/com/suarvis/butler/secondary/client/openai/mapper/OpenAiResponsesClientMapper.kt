@@ -13,6 +13,7 @@ import com.suarvis.butler.core.domain.session.ConversationMessage
 import com.suarvis.butler.core.domain.tool.ToolDefinition
 import com.suarvis.butler.secondary.client.openai.dto.ResponsesOutputItem
 import com.suarvis.butler.secondary.client.openai.dto.ResponsesResult
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -87,7 +88,7 @@ object OpenAiResponsesClientMapper {
                             put("type", "function_call")
                             put("call_id", call.id.value)
                             put("name", call.name.value)
-                            put("arguments", call.input.value)
+                            put("arguments", arguments(call.input))
                         }
                     }
             MessageRole.TOOL ->
@@ -100,6 +101,14 @@ object OpenAiResponsesClientMapper {
                     }
                 }
         }
+
+    /**
+     * The stored input when it is a JSON object; anything else (a call cut off mid-arguments) becomes
+     * `{}`, as on the other two dialects, so one malformed call cannot get every later request rejected.
+     * Departs from Clawcode (no Responses client), whose other dialects send `{"raw": <text>}`.
+     */
+    private fun arguments(input: JsonText): String =
+        input.value.takeIf { runCatching { Json.parseToJsonElement(it) is JsonObject }.getOrDefault(false) } ?: "{}"
 
     /**
      * Responses tools are flat, with no `function` wrapper. `strict: false` because leaving it out makes

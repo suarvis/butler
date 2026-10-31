@@ -13,6 +13,7 @@ import com.suarvis.butler.core.domain.session.ConversationMessage
 import com.suarvis.butler.core.domain.tool.ToolDefinition
 import com.suarvis.butler.secondary.client.openai.dto.OpenAiCompletion
 import com.suarvis.butler.secondary.client.openai.dto.OpenAiRequestOptions
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -106,7 +107,7 @@ object OpenAiClientMapper {
                                 put("type", "function")
                                 putJsonObject("function") {
                                     put("name", call.name.value)
-                                    put("arguments", call.input.value)
+                                    put("arguments", arguments(call.input))
                                 }
                             }
                         },
@@ -115,6 +116,14 @@ object OpenAiClientMapper {
             }
         }
     }
+
+    /**
+     * The stored input when it is a JSON object; anything else (a call cut off mid-arguments) becomes
+     * `{}`, as on Anthropic, because servers that parse arguments in history (Ollama) reject the request.
+     * Departs from Clawcode, which sends `{"raw": <text>}`.
+     */
+    private fun arguments(input: JsonText): String =
+        input.value.takeIf { runCatching { Json.parseToJsonElement(it) is JsonObject }.getOrDefault(false) } ?: "{}"
 
     private fun toWireTool(tool: ToolDefinition): JsonObject =
         buildJsonObject {
