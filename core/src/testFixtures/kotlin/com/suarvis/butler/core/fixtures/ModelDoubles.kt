@@ -2,11 +2,14 @@ package com.suarvis.butler.core.fixtures
 
 import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.exception.UnknownModelException
+import com.suarvis.butler.core.domain.generic.JsonText
 import com.suarvis.butler.core.domain.generic.ModelId
 import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.ProviderKind
 import com.suarvis.butler.core.domain.generic.StopReason
 import com.suarvis.butler.core.domain.generic.TokenUsage
+import com.suarvis.butler.core.domain.generic.ToolCallId
+import com.suarvis.butler.core.domain.generic.ToolName
 import com.suarvis.butler.core.domain.model.ModelPricing
 import com.suarvis.butler.core.domain.model.ModelProfile
 import com.suarvis.butler.core.domain.model.ModelProvider
@@ -24,6 +27,14 @@ class ScriptedModelGateway(vararg replies: Reply) : ModelGateway {
         data class Answer(val chunks: List<String>, val usage: TokenUsage, val stopReason: StopReason = StopReason.END_TURN) : Reply
 
         data class Failure(val error: ModelProviderException) : Reply
+
+        /** A reply that calls tools: [text] first when not empty, then [calls] in order, as providers send them. */
+        data class ToolCalls(
+            val calls: List<ContentBlock.ToolUse>,
+            val text: String,
+            val usage: TokenUsage,
+            val stopReason: StopReason = StopReason.TOOL_USE,
+        ) : Reply
     }
 
     private val pending = ArrayDeque(replies.toList())
@@ -37,12 +48,35 @@ class ScriptedModelGateway(vararg replies: Reply) : ModelGateway {
                 reply.chunks.forEach { onEvent(ModelStreamEvent.TextDelta(it)) }
                 ModelResponse(listOf(ContentBlock.Text(reply.chunks.joinToString(""))), reply.usage, reply.stopReason)
             }
+            is Reply.ToolCalls -> {
+                if (reply.text.isNotEmpty()) onEvent(ModelStreamEvent.TextDelta(reply.text))
+                val text = if (reply.text.isEmpty()) emptyList() else listOf(ContentBlock.Text(reply.text))
+                ModelResponse(text + reply.calls, reply.usage, reply.stopReason)
+            }
         }
     }
 
     companion object {
         fun answer(vararg chunks: String, usage: TokenUsage = TokenUsage(inputTokens = 10, outputTokens = 5)): Reply =
             Reply.Answer(chunks.toList(), usage)
+
+        /** A reply with one tool call; pass [id] when a turn calls the same tool more than once. */
+        fun toolCall(
+            name: String,
+            input: String = "{}",
+            id: String = "toolu_$name",
+            usage: TokenUsage = TokenUsage(inputTokens = 10, outputTokens = 5),
+        ): Reply = toolCalls(call(id, name, input), usage = usage)
+
+        /** A reply with several tool calls, run in the order given, optionally after some text. */
+        fun toolCalls(
+            vararg calls: ContentBlock.ToolUse,
+            text: String = "",
+            usage: TokenUsage = TokenUsage(inputTokens = 10, outputTokens = 5),
+        ): Reply = Reply.ToolCalls(calls.toList(), text, usage)
+
+        fun call(id: String, name: String, input: String = "{}"): ContentBlock.ToolUse =
+            ContentBlock.ToolUse(ToolCallId(id), ToolName(name), JsonText(input))
     }
 }
 

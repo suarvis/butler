@@ -7,6 +7,7 @@ import com.suarvis.butler.core.gateway.IdentityGateway
 import com.suarvis.butler.core.gateway.McpGateway
 import com.suarvis.butler.core.gateway.ModelCatalogGateway
 import com.suarvis.butler.core.gateway.ModelGateway
+import com.suarvis.butler.core.gateway.PermissionRulesGateway
 import com.suarvis.butler.core.gateway.RateLimitGateway
 import com.suarvis.butler.core.gateway.SessionGateway
 import com.suarvis.butler.core.gateway.ToolInputGateway
@@ -19,6 +20,7 @@ import com.suarvis.butler.core.usecase.session.ForkSessionUseCase
 import com.suarvis.butler.core.usecase.session.GetSessionUseCase
 import com.suarvis.butler.core.usecase.session.ListSessionsUseCase
 import com.suarvis.butler.core.usecase.session.StartSessionUseCase
+import com.suarvis.butler.core.usecase.tool.ListToolsUseCase
 import com.suarvis.butler.core.usecase.turn.RunToolCallUseCase
 import com.suarvis.butler.core.usecase.turn.RunTurnUseCase
 import org.springframework.boot.context.properties.EnableConfigurationProperties
@@ -73,6 +75,9 @@ class UseCaseConfig {
         rateLimits: RateLimitGateway,
         budgets: BudgetGateway,
         clock: Clock,
+        runToolCallUseCase: RunToolCallUseCase,
+        mcp: McpGateway,
+        permissionRules: PermissionRulesGateway,
         turn: TurnProperties,
     ) = RunTurnUseCase(
         getSession,
@@ -84,8 +89,17 @@ class UseCaseConfig {
         rateLimits,
         budgets,
         clock,
+        runToolCallUseCase,
+        mcp,
+        permissionRules,
         TurnSettings(toolsEnabled = turn.enabled),
     )
+
+    @Bean
+    fun listToolsUseCase(
+        mcp: McpGateway,
+        turn: TurnProperties,
+    ) = ListToolsUseCase(TurnSettings(toolsEnabled = turn.enabled), mcp)
 
     @Bean
     fun getUsageReportUseCase(

@@ -26,12 +26,17 @@ import com.suarvis.butler.core.domain.turn.TurnApprover
 import com.suarvis.butler.core.domain.turn.TurnCallbacks
 import com.suarvis.butler.core.domain.turn.TurnEvent
 import com.suarvis.butler.core.domain.turn.TurnObserver
+import com.suarvis.butler.core.fixtures.FakeMcpGateway
+import com.suarvis.butler.core.fixtures.FakeToolInputGateway
 import com.suarvis.butler.core.fixtures.FixedBudgetGateway
 import com.suarvis.butler.core.fixtures.FixedModelCatalog
+import com.suarvis.butler.core.fixtures.FixedPermissionRulesGateway
 import com.suarvis.butler.core.fixtures.InMemoryRateLimitGateway
 import com.suarvis.butler.core.fixtures.InMemorySessionGateway
 import com.suarvis.butler.core.fixtures.InMemoryUsageGateway
 import com.suarvis.butler.core.fixtures.MutableClock
+import com.suarvis.butler.core.fixtures.RecordingCommandGateway
+import com.suarvis.butler.core.fixtures.RecordingWorkspaceGateway
 import com.suarvis.butler.core.fixtures.ScriptedModelGateway
 import com.suarvis.butler.core.fixtures.SequentialIdentityGateway
 import com.suarvis.butler.core.fixtures.SessionFixtures
@@ -52,8 +57,14 @@ class RunTurnUseCaseTest {
     private val rateLimits = InMemoryRateLimitGateway()
     private val budgets = FixedBudgetGateway()
 
+    private val mcp = FakeMcpGateway()
+
+    // Tools stay off here (the loop has its own tests in ToolLoopTest), so no tool ever runs.
+    private val runToolCall =
+        RunToolCallUseCase(FakeToolInputGateway { name, _ -> error("no tool runs while tools are off: $name") }, RecordingWorkspaceGateway(), RecordingCommandGateway(), mcp)
+
     private fun useCase(models: ScriptedModelGateway) =
-        RunTurnUseCase(GetSessionUseCase(sessions), sessions, SequentialIdentityGateway(), models, catalog, usage, rateLimits, budgets, clock)
+        RunTurnUseCase(GetSessionUseCase(sessions), sessions, SequentialIdentityGateway(), models, catalog, usage, rateLimits, budgets, clock, runToolCall, mcp, FixedPermissionRulesGateway())
 
     private fun anthropicBudget(usd: String) = Budget(BudgetScope.Provider(ProviderId("anthropic")), BigDecimal(usd), null)
 
