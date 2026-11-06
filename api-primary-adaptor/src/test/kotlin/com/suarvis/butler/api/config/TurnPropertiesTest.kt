@@ -12,13 +12,13 @@ import org.springframework.core.io.ClassPathResource
 /** Binds `butler.tools` from the shipped application.yml, as the application does at start-up. */
 class TurnPropertiesTest {
     @Test
-    fun `tools are off in the shipped configuration`() {
-        assertFalse(bind().enabled)
+    fun `tools are on in the shipped configuration, since gate M1`() {
+        assertTrue(bind().enabled)
     }
 
     @Test
-    fun `the environment variable switches tools on`() {
-        assertTrue(bind("BUTLER_TOOLS_ENABLED" to "true").enabled)
+    fun `the environment variable switches tools off`() {
+        assertFalse(bind("BUTLER_TOOLS_ENABLED" to "false").enabled)
     }
 
     private fun bind(vararg environmentVariables: Pair<String, Any>): TurnProperties {

@@ -108,10 +108,10 @@ butler:
       api-key-required: false
       base-url: ${OLLAMA_BASE_URL:http://localhost:11434/v1}
 
-  # Tools the model may call: file tools, bash and MCP servers. Off while the lanes build them;
-  # gate M1 turns them on.
+  # Tools the model may call: file tools, bash and MCP servers. On since gate M1;
+  # BUTLER_TOOLS_ENABLED=false turns them off, so turns offer the model no tools.
   tools:
-    enabled: false
+    enabled: true
 
   # Permission rules for tool calls, in Clawcode's syntax: tool, tool(exact) or tool(prefix:*), for
   # example "read_file", "bash(git status)", "bash(rm:*)" or "write_file(.github/:*)". Deny wins,

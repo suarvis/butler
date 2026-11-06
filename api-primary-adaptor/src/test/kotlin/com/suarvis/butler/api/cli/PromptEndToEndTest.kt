@@ -1,8 +1,9 @@
 package com.suarvis.butler.api.cli
 
-import com.suarvis.butler.api.ButlerApplication
-import com.sun.net.httpserver.HttpServer
-import kotlinx.serialization.json.Json
+import com.suarvis.butler.api.cli.support.ButlerCli
+import com.suarvis.butler.api.cli.support.CliRun
+import com.suarvis.butler.api.cli.support.FakeAnthropic
+import com.suarvis.butler.api.cli.support.FakeOpenAi
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.int
@@ -15,83 +16,48 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.PrintStream
-import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.io.path.listDirectoryEntries
-import kotlin.io.path.readText
 
 /**
- * Runs `butler` end to end against local fakes of the Anthropic Messages API and an
- * OpenAI-compatible Chat Completions API, so prompts, streaming, the REPL, switching provider and
- * error reporting are exercised without network access or API cost.
+ * Runs `butler` end to end against the shared local fakes of the Anthropic Messages API and an
+ * OpenAI-style server (Responses for OpenAI, Chat Completions for Ollama), so prompts, streaming,
+ * the REPL, switching provider and error reporting are exercised without network access or API cost.
+ * The fakes answer with text only here; tool calls are [ToolsEndToEndTest]'s.
  */
 class PromptEndToEndTest {
     @TempDir
     lateinit var root: Path
 
-    private lateinit var workspace: Path
-    private val anthropic = FakeAnthropic()
-    private val openai = FakeOpenAi()
+    private lateinit var cli: ButlerCli
 
-    data class CliRun(val exitCode: Int, val stdout: String, val stderr: String) {
-        fun json(): JsonObject = Json.parseToJsonElement(stdout.trim().lines().last()).jsonObject
-    }
+    private val workspace: Path
+        get() = cli.workspace
+    private val anthropic: FakeAnthropic
+        get() = cli.anthropic
+    private val openai: FakeOpenAi
+        get() = cli.openai
 
     @BeforeEach
     fun setUp() {
-        workspace = root.resolve("project").also { Files.createDirectories(it) }
-        System.setProperty(BASE_URL_PROPERTY, anthropic.baseUrl)
-        System.setProperty(API_KEY_PROPERTY, "test-key")
-        System.setProperty(OPENAI_BASE_URL_PROPERTY, openai.baseUrl)
-        System.setProperty(OPENAI_API_KEY_PROPERTY, "sk-test")
-        System.setProperty(OLLAMA_BASE_URL_PROPERTY, openai.baseUrl)
-        // Never the real ~/.butler: the usage ledger and cooldowns of a test run stay in the temp folder.
-        System.setProperty(USER_DIRECTORY_PROPERTY, root.resolve("home/.butler").toString())
+        // Points every provider at the fakes and keeps ~/.butler (usage ledger, cooldowns) under root/home.
+        cli = ButlerCli(root)
     }
 
     @AfterEach
     fun tearDown() {
-        anthropic.close()
-        openai.close()
-        listOf(
-            BASE_URL_PROPERTY,
-            API_KEY_PROPERTY,
-            OPENAI_BASE_URL_PROPERTY,
-            OPENAI_API_KEY_PROPERTY,
-            OLLAMA_BASE_URL_PROPERTY,
-            USER_DIRECTORY_PROPERTY,
-            ANTHROPIC_BUDGET_PROPERTY,
-        ).forEach(System::clearProperty)
+        // Clears every property set here or through cli.property, and stops the fakes.
+        cli.close()
     }
 
-    private fun butler(vararg args: String, stdin: String = ""): CliRun {
-        val stdout = ByteArrayOutputStream()
-        val stderr = ByteArrayOutputStream()
-        val original = Triple(System.`in`, System.out, System.err)
-        System.setIn(ByteArrayInputStream(stdin.toByteArray()))
-        System.setOut(PrintStream(stdout, true, Charsets.UTF_8))
-        System.setErr(PrintStream(stderr, true, Charsets.UTF_8))
-        val exitCode =
-            try {
-                ButlerApplication.run("--cwd", workspace.toString(), *args)
-            } finally {
-                System.setIn(original.first)
-                System.setOut(original.second)
-                System.setErr(original.third)
-            }
-        return CliRun(exitCode, stdout.toString(Charsets.UTF_8), stderr.toString(Charsets.UTF_8))
-    }
+    private fun butler(vararg args: String, stdin: String = ""): CliRun = cli.run(*args, stdin = stdin)
 
-    private fun lastRequest(): JsonObject = Json.parseToJsonElement(anthropic.requests.last()).jsonObject
+    private fun lastRequest(): JsonObject = anthropic.requestBodies().last()
 
-    private fun lastOpenAiRequest(): JsonObject = Json.parseToJsonElement(openai.requests.last().body).jsonObject
+    private fun lastOpenAiRequest(): JsonObject = openai.requestBodies().last()
 
-    private fun savedSessionText(): String = workspace.resolve(".butler/sessions").listDirectoryEntries("*.jsonl").single().readText()
+    private fun savedSessionText(): String = cli.savedSessionText()
 
     @Test
     fun `a one-shot prompt returns Clawcode's JSON result and saves the session`() {
@@ -154,7 +120,7 @@ class PromptEndToEndTest {
 
     @Test
     fun `a missing API key is reported with a hint`() {
-        System.setProperty(API_KEY_PROPERTY, "")
+        cli.property(API_KEY_PROPERTY, "")
 
         val run = butler("--output-format", "json", "prompt", "hi")
 
@@ -248,7 +214,7 @@ class PromptEndToEndTest {
 
     @Test
     fun `a missing OpenAI key names that provider's variable`() {
-        System.setProperty(OPENAI_API_KEY_PROPERTY, "")
+        cli.property(OPENAI_API_KEY_PROPERTY, "")
 
         val run = butler("--output-format", "json", "--model", "gpt-5.5", "prompt", "hi")
 
@@ -298,7 +264,7 @@ class PromptEndToEndTest {
 
     @Test
     fun `over budget, a script stops with budget_exceeded before calling the provider`() {
-        System.setProperty(ANTHROPIC_BUDGET_PROPERTY, "0.0001")
+        cli.property(ANTHROPIC_BUDGET_PROPERTY, "0.0001")
 
         val run = butler("--output-format", "json", "prompt", "hi")
 
@@ -310,7 +276,7 @@ class PromptEndToEndTest {
 
     @Test
     fun `--allow-over-budget lets a script go over with a warning`() {
-        System.setProperty(ANTHROPIC_BUDGET_PROPERTY, "0.0001")
+        cli.property(ANTHROPIC_BUDGET_PROPERTY, "0.0001")
         anthropic.answer("over budget, as allowed")
 
         val run = butler("--allow-over-budget", "prompt", "hi")
@@ -322,7 +288,7 @@ class PromptEndToEndTest {
 
     @Test
     fun `butler usage shows budgets and flags the exceeded ones`() {
-        System.setProperty(ANTHROPIC_BUDGET_PROPERTY, "0.00001")
+        cli.property(ANTHROPIC_BUDGET_PROPERTY, "0.00001")
         anthropic.answer("costly")
         butler("--allow-over-budget", "prompt", "hi")
 
@@ -347,108 +313,9 @@ class PromptEndToEndTest {
         assertTrue(Files.exists(root.resolve("home/.butler/rate-limits.json")))
     }
 
-    /** Minimal fake of POST /v1/messages that streams scripted answers. */
-    private class FakeAnthropic : AutoCloseable {
-        private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        private val replies = ConcurrentLinkedQueue<Pair<Int, String>>()
-        val requests = ConcurrentLinkedQueue<String>()
-
-        val baseUrl: String
-            get() = "http://127.0.0.1:${server.address.port}"
-
-        init {
-            server.createContext("/v1/messages") { exchange ->
-                requests += exchange.requestBody.readAllBytes().toString(Charsets.UTF_8)
-                val (status, body) = replies.poll() ?: (500 to """{"type":"error","error":{"type":"api_error","message":"no scripted reply"}}""")
-                val bytes = body.toByteArray(Charsets.UTF_8)
-                exchange.sendResponseHeaders(status, bytes.size.toLong())
-                exchange.responseBody.use { it.write(bytes) }
-            }
-            server.start()
-        }
-
-        fun answer(vararg chunks: String): FakeAnthropic =
-            apply {
-                val events =
-                    buildList {
-                        add("message_start" to """{"type":"message_start","message":{"usage":{"input_tokens":12,"output_tokens":1}}}""")
-                        add("content_block_start" to """{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}""")
-                        chunks.forEach { add("content_block_delta" to """{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"$it"}}""") }
-                        add("content_block_stop" to """{"type":"content_block_stop","index":0}""")
-                        add("message_delta" to """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}""")
-                        add("message_stop" to """{"type":"message_stop"}""")
-                    }
-                replies += 200 to events.joinToString(separator = "") { (name, data) -> "event: $name\ndata: $data\n\n" }
-            }
-
-        fun fail(status: Int, body: String): FakeAnthropic = apply { replies += status to body }
-
-        override fun close() = server.stop(0)
-    }
-
-    /**
-     * Minimal fake of an OpenAI-style server: POST /responses (OpenAI, xAI) and POST
-     * /chat/completions (Ollama and other compatible servers), each answering in its own format.
-     */
-    private class FakeOpenAi : AutoCloseable {
-        data class Recorded(val path: String, val body: String, val authorization: String?)
-
-        private val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        private val replies = ConcurrentLinkedQueue<String>()
-        val requests = ConcurrentLinkedQueue<Recorded>()
-
-        val baseUrl: String
-            get() = "http://127.0.0.1:${server.address.port}/v1"
-
-        init {
-            server.createContext("/v1/") { exchange ->
-                val path = exchange.requestURI.path
-                requests += Recorded(path, exchange.requestBody.readAllBytes().toString(Charsets.UTF_8), exchange.requestHeaders.getFirst("Authorization"))
-                val text = replies.poll()
-                val (status, body) =
-                    when {
-                        text == null -> 500 to """{"error":{"message":"no scripted reply"}}"""
-                        path.endsWith("/responses") -> 200 to responsesStream(text)
-                        else -> 200 to chatStream(text)
-                    }
-                val bytes = body.toByteArray(Charsets.UTF_8)
-                exchange.sendResponseHeaders(status, bytes.size.toLong())
-                exchange.responseBody.use { it.write(bytes) }
-            }
-            server.start()
-        }
-
-        fun answer(text: String): FakeOpenAi = apply { replies += text }
-
-        private fun chatStream(text: String): String =
-            listOf(
-                """{"choices":[{"index":0,"delta":{"role":"assistant","content":"$text"},"finish_reason":null}]}""",
-                """{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}""",
-                """{"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4}}""",
-                "[DONE]",
-            ).joinToString(separator = "") { "data: $it\n\n" }
-
-        private fun responsesStream(text: String): String {
-            val message = """{"type":"message","id":"msg_1","status":"completed","role":"assistant","content":[{"type":"output_text","text":"$text"}]}"""
-            return listOf(
-                "response.output_text.delta" to """{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"$text"}""",
-                "response.output_item.done" to """{"type":"response.output_item.done","output_index":0,"item":$message}""",
-                "response.completed" to
-                    """{"type":"response.completed","response":{"id":"resp_1","status":"completed","output":[$message],""" +
-                    """"usage":{"input_tokens":20,"input_tokens_details":{"cached_tokens":0},"output_tokens":4,"total_tokens":24}}}""",
-            ).joinToString(separator = "") { (event, data) -> "event: $event\ndata: $data\n\n" }
-        }
-
-        override fun close() = server.stop(0)
-    }
-
     private companion object {
-        const val BASE_URL_PROPERTY = "butler.providers.anthropic.base-url"
         const val API_KEY_PROPERTY = "butler.providers.anthropic.api-key"
-        const val OPENAI_BASE_URL_PROPERTY = "butler.providers.openai.base-url"
         const val OPENAI_API_KEY_PROPERTY = "butler.providers.openai.api-key"
-        const val OLLAMA_BASE_URL_PROPERTY = "butler.providers.ollama.base-url"
-        const val USER_DIRECTORY_PROPERTY = "butler.persistence.file.user-directory"
         const val ANTHROPIC_BUDGET_PROPERTY = "butler.budgets.providers.anthropic.monthly-usd"
     }
 }
