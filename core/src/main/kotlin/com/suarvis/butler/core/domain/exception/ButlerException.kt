@@ -42,6 +42,14 @@ class InvalidToolInputException(val tool: ToolName, reason: String) : ButlerExce
 class BudgetExceededException(val breaches: List<BudgetBreach>) :
     ButlerException("Over budget: ${breaches.joinToString("; ") { it.describe() }}")
 
+/**
+ * The turn made [limit] model calls and the model still wanted to call tools. Every call so far
+ * has its result and the session is saved, so a following prompt continues it. The wording is
+ * Clawcode's (`conversation.rs`), with the limit added so the user knows which value was reached.
+ */
+class IterationLimitException(val limit: Int) :
+    ButlerException("conversation loop exceeded the maximum number of iterations ($limit)")
+
 /** A secondary adaptor could not complete a gateway call (storage, network, ...). */
 class GatewayException(message: String, cause: Throwable? = null) : ButlerException(message, cause)
 

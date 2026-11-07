@@ -11,6 +11,7 @@ import com.suarvis.butler.core.domain.exception.ButlerException
 import com.suarvis.butler.core.domain.exception.DomainValidationException
 import com.suarvis.butler.core.domain.exception.GatewayException
 import com.suarvis.butler.core.domain.exception.InvalidToolInputException
+import com.suarvis.butler.core.domain.exception.IterationLimitException
 import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.exception.ModelProviderException.Failure
 import com.suarvis.butler.core.domain.exception.SessionNotFoundException
@@ -73,6 +74,14 @@ class CliExceptionHandler(
                     "budget_exceeded",
                     error.messageOrName(),
                     "Raise the limit under butler.budgets, pass --allow-over-budget, or switch model with --model or /model. See `butler usage`.",
+                    ExitCodes.RUNTIME,
+                )
+            is IterationLimitException ->
+                CliFailure(
+                    "iteration_limit",
+                    error.messageOrName(),
+                    "The session is saved: continue it with another prompt (`butler prompt --session latest ...`), " +
+                        "or raise butler.tools.max-iterations (BUTLER_TOOLS_MAXITERATIONS).",
                     ExitCodes.RUNTIME,
                 )
             is UnknownModelException ->

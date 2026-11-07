@@ -112,6 +112,9 @@ butler:
   # BUTLER_TOOLS_ENABLED=false turns them off, so turns offer the model no tools.
   tools:
     enabled: true
+    # Most model calls in one turn before it stops with iteration_limit; the session is saved, so
+    # another prompt continues it. Clawcode's sub-agents use the same limit.
+    max-iterations: 32
 
   # Permission rules for tool calls, in Clawcode's syntax: tool, tool(exact) or tool(prefix:*), for
   # example "read_file", "bash(git status)", "bash(rm:*)" or "write_file(.github/:*)". Deny wins,

@@ -3,6 +3,7 @@ package com.suarvis.butler.core.usecase.turn
 import com.suarvis.butler.core.domain.budget.BillingPeriod
 import com.suarvis.butler.core.domain.budget.UsageRecord
 import com.suarvis.butler.core.domain.exception.BudgetExceededException
+import com.suarvis.butler.core.domain.exception.IterationLimitException
 import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.exception.ModelProviderException.Failure
 import com.suarvis.butler.core.domain.exception.UnknownModelException
@@ -75,6 +76,13 @@ import java.time.LocalDate
  * transcript is normalized for each request, so a session can move between providers. When the
  * chosen model is over budget, rate limited or out of quota, the caller's [TurnApprover] (in
  * [TurnCallbacks]) decides: go ahead anyway, switch to one of the clear fallbacks, or stop.
+ * Budgets and rate limits are checked before every model call of the loop, against the transcript
+ * as it stands then, tool results included; each call's usage reaches the ledger as soon as it
+ * answers, so the next check counts it. A switch the user approves holds for the rest of the turn.
+ *
+ * A turn makes at most [TurnSettings.maxIterations] model calls. One whose model still calls tools
+ * after that many stops with [IterationLimitException], as Clawcode's loop does, once every call
+ * has its result and the session is saved.
  */
 class RunTurnUseCase(
     private val getSession: GetSessionUseCase,
@@ -144,8 +152,14 @@ class RunTurnUseCase(
             return summary
         }
         while (true) {
-            // Clawcode checks before counting the iteration, so a turn stopped here made no call for it.
+            // Clawcode's order: poll for a cancel, then hold the next call against the limit. A turn
+            // stopped by either made no call for this pass.
             if (cancellation.isCancelled()) return interrupted()
+            if (iterations >= settings.maxIterations) {
+                // Every call so far has its result, so the saved transcript is valid and a following prompt continues it.
+                sessions.save(session)
+                throw IterationLimitException(settings.maxIterations)
+            }
             iterations++
             val answered = answer(session, model, command.workspace, offered, observer, approver, cancellation)
             // A switch the user approved holds for the rest of the turn.
@@ -161,6 +175,7 @@ class RunTurnUseCase(
                 session = session.closeDanglingToolCalls(TOOLS_UNAVAILABLE_RESULT, answeredAt)
             }
             sessions.save(session)
+            // One ledger record per model call, so the budget check before the next call counts this one.
             usage.record(
                 UsageRecord(answeredAt, model.provider.id, model.id, response.usage, model.pricing?.costOf(response.usage)),
             )
@@ -244,8 +259,9 @@ class RunTurnUseCase(
     private class TurnInterrupted : RuntimeException("turn interrupted", null, false, false)
 
     /**
-     * Calls the model the routing rules allow, switching or retrying when the user approves.
-     * Bounded, so an approver that keeps saying "try again" cannot loop forever.
+     * One model call of the loop: calls the model the routing rules allow, switching or retrying
+     * when the user approves. Bounded by [MAX_ATTEMPTS] per call, so an approver that keeps saying
+     * "try again" cannot loop forever, while retries in earlier calls never cut a long turn short.
      */
     private fun answer(
         start: Session,
@@ -259,6 +275,7 @@ class RunTurnUseCase(
         var session = start
         // Earlier calls of an offered tool stay native tool calls; the rest are sent as text.
         val transcript = TranscriptNormalizer.normalize(session.messages, offered.map { it.name }.toSet())
+        // Estimated afresh for every call: the tool results since the last one make the request bigger.
         val estimatedInputTokens = TokenEstimator.estimate(systemPrompt(workspace, requested), transcript)
         var model = approvedModel(requested, estimatedInputTokens, approver)
         var lastFailure: ModelProviderException? = null

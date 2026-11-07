@@ -1,5 +1,6 @@
 package com.suarvis.butler.core.domain.turn
 
+import com.suarvis.butler.core.domain.generic.ensure
 import com.suarvis.butler.core.domain.permission.PermissionMode
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.shell.BashRisk
@@ -55,8 +56,25 @@ enum class ToolApprovalDecision {
     DENY,
 }
 
-/** Turn settings bound from configuration (butler.tools.*), since core cannot read configuration. Lane A adds the iteration limit here. */
+/** Turn settings bound from configuration (butler.tools.*), since core cannot read configuration. */
 data class TurnSettings(
     /** Off by default, so a turn offers the model no tools until they are switched on. */
     val toolsEnabled: Boolean = false,
-)
+    /**
+     * The most model calls one turn may make before it stops with
+     * [com.suarvis.butler.core.domain.exception.IterationLimitException], so a model that never
+     * stops calling tools cannot spend a whole budget in one turn. Butler departs from Clawcode
+     * here: its CLI sets no limit (`usize::MAX`); 32 is what its sub-agents run with
+     * (`DEFAULT_AGENT_MAX_ITERATIONS` in `tools/src/lib.rs`).
+     */
+    val maxIterations: Int = DEFAULT_MAX_ITERATIONS,
+) {
+    init {
+        // At least one call, so every turn can answer the prompt at all.
+        ensure(maxIterations >= 1) { "butler.tools.max-iterations must be at least 1, got $maxIterations" }
+    }
+
+    companion object {
+        const val DEFAULT_MAX_ITERATIONS = 32
+    }
+}

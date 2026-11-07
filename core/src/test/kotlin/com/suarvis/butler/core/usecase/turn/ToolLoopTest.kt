@@ -1,8 +1,14 @@
 package com.suarvis.butler.core.usecase.turn
 
+import com.suarvis.butler.core.domain.budget.Budget
+import com.suarvis.butler.core.domain.budget.BudgetScope
+import com.suarvis.butler.core.domain.budget.UsageRecord
+import com.suarvis.butler.core.domain.exception.BudgetExceededException
+import com.suarvis.butler.core.domain.exception.IterationLimitException
 import com.suarvis.butler.core.domain.exception.ModelProviderException
 import com.suarvis.butler.core.domain.generic.JsonText
 import com.suarvis.butler.core.domain.generic.MessageRole
+import com.suarvis.butler.core.domain.generic.ModelId
 import com.suarvis.butler.core.domain.generic.ProviderId
 import com.suarvis.butler.core.domain.generic.StopReason
 import com.suarvis.butler.core.domain.generic.TokenUsage
@@ -12,6 +18,8 @@ import com.suarvis.butler.core.domain.generic.WorkspacePath
 import com.suarvis.butler.core.domain.permission.PermissionMode
 import com.suarvis.butler.core.domain.permission.PermissionRules
 import com.suarvis.butler.core.domain.permission.ToolPattern
+import com.suarvis.butler.core.domain.routing.RoutingObstacle
+import com.suarvis.butler.core.domain.routing.TokenEstimator
 import com.suarvis.butler.core.domain.session.ContentBlock
 import com.suarvis.butler.core.domain.session.Session
 import com.suarvis.butler.core.domain.session.SessionReference
@@ -20,6 +28,8 @@ import com.suarvis.butler.core.domain.tool.PermissionTier
 import com.suarvis.butler.core.domain.tool.ToolDefinition
 import com.suarvis.butler.core.domain.tool.ToolInvocation
 import com.suarvis.butler.core.domain.tool.ToolOutcome
+import com.suarvis.butler.core.domain.turn.ApprovalDecision
+import com.suarvis.butler.core.domain.turn.ApprovalRequest
 import com.suarvis.butler.core.domain.turn.ToolApprovalDecision
 import com.suarvis.butler.core.domain.turn.TurnCallbacks
 import com.suarvis.butler.core.domain.turn.TurnEvent
@@ -38,6 +48,7 @@ import com.suarvis.butler.core.fixtures.InMemoryUsageGateway
 import com.suarvis.butler.core.fixtures.MutableClock
 import com.suarvis.butler.core.fixtures.RecordingCommandGateway
 import com.suarvis.butler.core.fixtures.RecordingToolApprover
+import com.suarvis.butler.core.fixtures.RecordingTurnApprover
 import com.suarvis.butler.core.fixtures.RecordingWorkspaceGateway
 import com.suarvis.butler.core.fixtures.ScriptedModelGateway
 import com.suarvis.butler.core.fixtures.ScriptedModelGateway.Companion.answer
@@ -49,12 +60,16 @@ import com.suarvis.butler.core.fixtures.SessionFixtures
 import com.suarvis.butler.core.gateway.PermissionRulesGateway
 import com.suarvis.butler.core.usecase.session.GetSessionUseCase
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import java.math.BigDecimal
 
 /**
- * The model → tool → model loop (A2), its permission step (A5) and cancellation (A6). The rule for
- * every test: the saved session has no pending tool calls.
+ * The model → tool → model loop (A2), its permission step (A5), cancellation (A6), the iteration
+ * limit (A3) and budgets and usage per model call (A4). The rule for every test: the saved session
+ * has no pending tool calls.
  */
 class ToolLoopTest {
     private val sessions = InMemorySessionGateway()
@@ -62,6 +77,7 @@ class ToolLoopTest {
     private val workspace = SessionFixtures.workspace
     private val usage = InMemoryUsageGateway()
     private val rateLimits = InMemoryRateLimitGateway()
+    private val budgets = FixedBudgetGateway()
     private val readme = WorkspacePath("README.md")
     private val search =
         ToolDefinition(ToolName("mcp__docs__search"), "Search the docs.", JsonText("""{"type":"object"}"""), PermissionTier.READ_ONLY)
@@ -86,6 +102,7 @@ class ToolLoopTest {
         models: ScriptedModelGateway,
         toolsEnabled: Boolean = true,
         rules: PermissionRulesGateway = FixedPermissionRulesGateway(),
+        maxIterations: Int = TurnSettings.DEFAULT_MAX_ITERATIONS,
     ) = RunTurnUseCase(
         GetSessionUseCase(sessions),
         sessions,
@@ -94,12 +111,12 @@ class ToolLoopTest {
         FixedModelCatalog(),
         usage,
         rateLimits,
-        FixedBudgetGateway(),
+        budgets,
         clock,
         RunToolCallUseCase(inputs, files, commands, mcp),
         mcp,
         rules,
-        TurnSettings(toolsEnabled = toolsEnabled),
+        TurnSettings(toolsEnabled = toolsEnabled, maxIterations = maxIterations),
     )
 
     private fun saved(summary: TurnSummary): Session {
@@ -117,6 +134,26 @@ class ToolLoopTest {
 
         assertEquals(answer, next.finalText)
         assertEquals(summary.session.messages, saved(next).messages.take(summary.session.messages.size))
+    }
+
+    /** The same for a turn that failed: a following prompt continues the session it saved. */
+    private fun assertLatestContinues(turns: RunTurnUseCase, answer: String): TurnSummary {
+        val stopped = sessions.findLatest(workspace)!!
+        assertTrue(stopped.pendingToolCalls().isEmpty(), "pending: ${stopped.pendingToolCalls()}")
+
+        val next = turns.execute(RunTurnUseCase.Command(workspace, "Go on", session = SessionReference.ById(stopped.id)))
+
+        assertEquals(answer, next.finalText)
+        assertEquals(stopped.messages, saved(next).messages.take(stopped.messages.size))
+        return next
+    }
+
+    private fun anthropicBudget(usd: String) = Budget(BudgetScope.Provider(ProviderId("anthropic")), BigDecimal(usd), null)
+
+    /** The estimated input of the budget check that raised [request], read back from its breach. */
+    private fun estimatedInput(request: ApprovalRequest): Long {
+        val breach = (request.obstacles.single() as RoutingObstacle.OverBudget).breaches.single()
+        return breach.projected.tokens - breach.spent.tokens
     }
 
     private fun recording(events: MutableList<TurnEvent>, cancellation: CancelAfter, approver: RecordingToolApprover = RecordingToolApprover()) =
@@ -407,5 +444,216 @@ class ToolLoopTest {
         assertTrue(summary.interrupted)
         assertTrue(rateLimits.cooldowns.isEmpty(), "no cooldown is remembered")
         assertEquals(listOf(MessageRole.USER), saved(summary).messages.map { it.role })
+    }
+
+    // The iteration limit (A3)
+
+    @Test
+    fun `a model that keeps calling tools stops at the limit with every call answered and the session saved`() {
+        val models =
+            ScriptedModelGateway(
+                toolCall("mcp__docs__search", id = "toolu_1"),
+                toolCall("mcp__docs__search", id = "toolu_2"),
+                toolCall("mcp__docs__search", id = "toolu_3"),
+                answer("Never asked for."),
+            )
+
+        val error = assertThrows<IterationLimitException> { useCase(models, maxIterations = 3).execute(RunTurnUseCase.Command(workspace, "Search until done")) }
+
+        assertEquals(3, error.limit)
+        assertEquals("conversation loop exceeded the maximum number of iterations (3)", error.message)
+        assertEquals(3, models.requests.size)
+        assertEquals(3, mcp.calls.size)
+        assertEquals(3, usage.records.size)
+        val saved = sessions.findLatest(workspace)!!
+        assertTrue(saved.pendingToolCalls().isEmpty(), "pending: ${saved.pendingToolCalls()}")
+        assertEquals(
+            listOf(MessageRole.USER) + List(3) { listOf(MessageRole.ASSISTANT, MessageRole.TOOL) }.flatten(),
+            saved.messages.map { it.role },
+        )
+        assertEquals(listOf(ToolCallId("toolu_1"), ToolCallId("toolu_2"), ToolCallId("toolu_3")), saved.results().map { it.toolUseId })
+    }
+
+    @Test
+    fun `the limit counts model calls, so an answer on the last allowed call ends the turn normally`() {
+        val models = ScriptedModelGateway(toolCall("read_file"), answer("Read it."))
+
+        val summary = useCase(models, maxIterations = 2).execute(RunTurnUseCase.Command(workspace, "Read"))
+
+        assertEquals("Read it.", summary.finalText)
+        assertEquals(2, summary.iterations)
+        assertFalse(summary.interrupted)
+    }
+
+    @Test
+    fun `a following prompt continues a turn stopped at the limit, and counts its own calls afresh`() {
+        val models =
+            ScriptedModelGateway(
+                toolCall("read_file", id = "toolu_1"),
+                toolCall("glob_search", id = "toolu_2"),
+                toolCall("mcp__docs__search", id = "toolu_3"),
+                answer("Found it."),
+            )
+        val turns = useCase(models, maxIterations = 2)
+        assertThrows<IterationLimitException> { turns.execute(RunTurnUseCase.Command(workspace, "Look around")) }
+
+        val next = assertLatestContinues(turns, "Found it.")
+
+        assertEquals(2, next.iterations)
+        val results = saved(next).results()
+        assertEquals(listOf(ToolCallId("toolu_1"), ToolCallId("toolu_2"), ToolCallId("toolu_3")), results.map { it.toolUseId })
+        assertEquals(listOf("# Butler", "src/Main.kt", "3 hits"), results.map { it.output })
+    }
+
+    @Test
+    fun `a cancel at the limit is an interruption, because Clawcode polls for one first`() {
+        val models = ScriptedModelGateway(toolCall("read_file"))
+
+        // Polls: before the first call, before the tool call, then before the second call, which the limit would refuse.
+        val summary = useCase(models, maxIterations = 1).execute(RunTurnUseCase.Command(workspace, "Read"), recording(mutableListOf(), CancelAfter(2)))
+
+        assertTrue(summary.interrupted)
+        assertEquals(1, summary.iterations)
+        assertEquals("# Butler", saved(summary).results().single().output)
+    }
+
+    // Budgets and usage per model call (A4)
+
+    @Test
+    fun `a budget the first call used up reaches the approver before the second call`() {
+        budgets.budgets = listOf(anthropicBudget("1.00"))
+        val approver = RecordingTurnApprover({ ApprovalDecision.Continue })
+        // 400k input tokens at the test price of $3 per million and 5 output tokens at $15: $1.200075.
+        val models = ScriptedModelGateway(toolCall("read_file", usage = TokenUsage(inputTokens = 400_000, outputTokens = 5)), answer("Read it."))
+
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "Read"), TurnCallbacks(approver = approver))
+
+        val request = approver.requests.single()
+        assertEquals(ModelId("claude-sonnet-4-6"), request.model.id)
+        val breach = (request.obstacles.single() as RoutingObstacle.OverBudget).breaches.single()
+        assertEquals(0, BigDecimal("1.200075").compareTo(breach.spent.usd), breach.spent.toString())
+        assertEquals(2, models.requests.size)
+        assertEquals("Read it.", summary.finalText)
+    }
+
+    @Test
+    fun `the budget check before each call estimates the transcript that call sends, tool results included`() {
+        budgets.budgets = listOf(anthropicBudget("1.00"))
+        usage.record(UsageRecord(SessionFixtures.start, ProviderId("anthropic"), ModelId("claude-sonnet-4-6"), TokenUsage(inputTokens = 1000), BigDecimal("2.00")))
+        val approver = RecordingTurnApprover({ ApprovalDecision.Continue }, { ApprovalDecision.Continue })
+        val models = ScriptedModelGateway(toolCall("read_file"), answer("Read it."))
+
+        useCase(models).execute(RunTurnUseCase.Command(workspace, "Read"), TurnCallbacks(approver = approver))
+
+        val estimates = approver.requests.map { estimatedInput(it) }
+        assertEquals(models.requests.map { TokenEstimator.estimate(it.systemPrompt, it.messages) }, estimates)
+        assertTrue(estimates[1] > estimates[0], estimates.toString())
+    }
+
+    @Test
+    fun `stopping at a budget before the second call fails the turn after the tool results are saved`() {
+        budgets.budgets = listOf(anthropicBudget("1.00"))
+        val approver = RecordingTurnApprover({ ApprovalDecision.Stop })
+        val expensive = TokenUsage(inputTokens = 400_000, outputTokens = 5)
+        val models =
+            ScriptedModelGateway(toolCalls(call("toolu_1", "read_file"), call("toolu_2", "glob_search"), usage = expensive), answer("Picked up again."))
+
+        val error =
+            assertThrows<BudgetExceededException> {
+                useCase(models).execute(RunTurnUseCase.Command(workspace, "Look around"), TurnCallbacks(approver = approver))
+            }
+
+        assertTrue(error.message!!.contains("anthropic monthly budget: $1.20 of $1.00 spent"), error.message)
+        assertEquals(1, approver.requests.size)
+        assertEquals(1, models.requests.size)
+        assertEquals(1, usage.records.size)
+        val saved = sessions.findLatest(workspace)!!
+        assertEquals(listOf(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.TOOL, MessageRole.TOOL), saved.messages.map { it.role })
+        assertEquals(listOf("# Butler", "src/Main.kt"), saved.results().map { it.output })
+        budgets.budgets = emptyList()
+        assertLatestContinues(useCase(models), "Picked up again.")
+    }
+
+    @Test
+    fun `switching model before the second call moves the rest of the turn to it`() {
+        budgets.budgets = listOf(anthropicBudget("1.00"))
+        val approver = RecordingTurnApprover({ request -> ApprovalDecision.SwitchTo(request.alternatives.single()) })
+        val models =
+            ScriptedModelGateway(
+                toolCall("read_file", id = "toolu_1", usage = TokenUsage(inputTokens = 400_000, outputTokens = 5)),
+                toolCall("glob_search", id = "toolu_2"),
+                answer("From GPT."),
+            )
+
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "Look around"), TurnCallbacks(approver = approver))
+
+        assertEquals(1, approver.requests.size)
+        assertEquals(listOf("claude-sonnet-4-6", "gpt-5.5", "gpt-5.5"), models.requests.map { it.model.id.value })
+        assertEquals(listOf("claude-sonnet-4-6", "gpt-5.5", "gpt-5.5"), usage.records.map { it.model.value })
+        assertEquals(ModelId("gpt-5.5"), summary.model.id)
+        assertEquals(ModelId("gpt-5.5"), saved(summary).model)
+        assertEquals("From GPT.", summary.finalText)
+    }
+
+    @Test
+    fun `the ledger gets one record per model call, with that call's usage and cost`() {
+        val models =
+            ScriptedModelGateway(
+                toolCall("read_file", id = "toolu_1", usage = TokenUsage(inputTokens = 100, outputTokens = 20)),
+                toolCall("glob_search", id = "toolu_2", usage = TokenUsage(inputTokens = 200, outputTokens = 30)),
+                answer("Done.", usage = TokenUsage(inputTokens = 300, outputTokens = 40)),
+            )
+
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "Look around"))
+
+        assertEquals(
+            listOf(TokenUsage(inputTokens = 100, outputTokens = 20), TokenUsage(inputTokens = 200, outputTokens = 30), TokenUsage(inputTokens = 300, outputTokens = 40)),
+            usage.records.map { it.usage },
+        )
+        // At the test price of $3 per million input tokens and $15 per million output tokens.
+        assertEquals(listOf("0.0006", "0.00105", "0.0015"), usage.records.map { it.costUsd!!.stripTrailingZeros().toPlainString() })
+        usage.records.forEach { assertEquals(ProviderId("anthropic"), it.provider) }
+        assertEquals(TokenUsage(inputTokens = 600, outputTokens = 90), summary.usage)
+        assertEquals(3, summary.iterations)
+    }
+
+    @Test
+    fun `a 429 on the second call sets a cooldown and offers the other providers`() {
+        val limited = ModelProviderException(ProviderId("anthropic"), ModelProviderException.Failure.RATE_LIMITED, "slow down", retryAfterSeconds = 20)
+        val approver = RecordingTurnApprover({ request -> ApprovalDecision.SwitchTo(request.alternatives.first()) })
+        val models = ScriptedModelGateway(toolCall("read_file"), ScriptedModelGateway.Reply.Failure(limited), answer("From GPT."))
+
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "Read"), TurnCallbacks(approver = approver))
+
+        assertEquals(SessionFixtures.start.plusSeconds(20), rateLimits.cooldowns[ProviderId("anthropic")])
+        val request = approver.requests.single()
+        assertTrue(request.obstacles.single() is RoutingObstacle.RateLimited, request.obstacles.toString())
+        assertEquals(listOf(ModelId("gpt-5.5")), request.alternatives.map { it.id })
+        assertEquals(listOf("claude-sonnet-4-6", "claude-sonnet-4-6", "gpt-5.5"), models.requests.map { it.model.id.value })
+        // The other provider gets what the failed call sent, the tool result included.
+        assertEquals(models.requests[1].messages, models.requests[2].messages)
+        assertEquals("# Butler", models.requests[2].messages.last().toolResults.single().output)
+        assertEquals(2, usage.records.size, "a failed call is not recorded")
+        assertEquals(ModelId("gpt-5.5"), saved(summary).model)
+        assertEquals("From GPT.", summary.finalText)
+    }
+
+    @Test
+    fun `retries are counted per model call, so earlier ones never cut a long turn short`() {
+        val overloaded =
+            ScriptedModelGateway.Reply.Failure(ModelProviderException(ProviderId("anthropic"), ModelProviderException.Failure.OVERLOADED, "overloaded"))
+        // Four failures and then a success take all five attempts of a call, twice in one turn.
+        val models =
+            ScriptedModelGateway(overloaded, overloaded, overloaded, overloaded, toolCall("read_file"), overloaded, overloaded, overloaded, overloaded, answer("Finally."))
+        val retry: (ApprovalRequest) -> ApprovalDecision = { ApprovalDecision.Continue }
+        val approver = RecordingTurnApprover(*Array(8) { retry })
+
+        val summary = useCase(models).execute(RunTurnUseCase.Command(workspace, "Read"), TurnCallbacks(approver = approver))
+
+        assertEquals("Finally.", summary.finalText)
+        assertEquals(10, models.requests.size)
+        assertEquals(8, approver.requests.size)
+        assertEquals(2, summary.iterations)
+        assertEquals(2, usage.records.size)
     }
 }

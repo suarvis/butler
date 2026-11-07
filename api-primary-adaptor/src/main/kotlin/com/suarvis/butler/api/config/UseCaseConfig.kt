@@ -92,7 +92,7 @@ class UseCaseConfig {
         runToolCallUseCase,
         mcp,
         permissionRules,
-        TurnSettings(toolsEnabled = turn.enabled),
+        TurnSettings(toolsEnabled = turn.enabled, maxIterations = turn.maxIterations),
     )
 
     @Bean
