@@ -33,12 +33,24 @@ internal object TextFiles {
         if ((0 until minOf(bytes.size, BINARY_PROBE_BYTES)).any { bytes[it] == NUL }) {
             throw WorkspaceToolException("file appears to be binary")
         }
-        return decodeUtf8(bytes) ?: throw WorkspaceToolException("stream did not contain valid UTF-8")
+        return decodeUtf8(bytes) ?: throw WorkspaceToolException(INVALID_UTF8)
+    }
+
+    /**
+     * [file] as text for `edit_file`, which Clawcode reads with a plain `read_to_string`: strict
+     * UTF-8, with no size or binary check.
+     *
+     * @throws WorkspaceToolException with Rust's wording for a folder or for text that is not UTF-8
+     */
+    fun readUtf8(file: Path): String {
+        if (Files.isDirectory(file)) throw WorkspaceToolException(IoErrorMessages.IS_A_DIRECTORY)
+        return decodeUtf8(Files.readAllBytes(file)) ?: throw WorkspaceToolException(INVALID_UTF8)
     }
 
     /**
      * [file] as UTF-8 text, or null when it cannot be read or is not valid UTF-8. Clawcode's
-     * `grep_search` skips such files, with no size or binary check.
+     * `grep_search` skips such files, with no size or binary check, and its `write_file` treats
+     * one as a file it creates.
      */
     fun readUtf8OrNull(file: Path): String? =
         try {
@@ -80,4 +92,7 @@ internal object TextFiles {
         }
 
     private const val NUL: Byte = 0
+
+    /** What Rust's `read_to_string` reports for bytes that are not UTF-8. */
+    private const val INVALID_UTF8 = "stream did not contain valid UTF-8"
 }

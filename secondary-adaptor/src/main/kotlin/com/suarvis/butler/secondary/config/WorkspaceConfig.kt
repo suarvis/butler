@@ -9,7 +9,6 @@ import org.springframework.context.annotation.Configuration
 
 /**
  * File tools: decoding tool input and running read, write, edit, glob and grep in the workspace.
- * Reading and searching are real; writing and editing answer "not available" until tasks C4 and C5.
  */
 @Configuration(proxyBeanMethods = false)
 class WorkspaceConfig {

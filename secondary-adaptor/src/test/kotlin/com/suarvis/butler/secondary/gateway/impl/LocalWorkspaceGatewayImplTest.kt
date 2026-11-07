@@ -6,6 +6,8 @@ import com.suarvis.butler.core.domain.generic.WorkspacePath
 import com.suarvis.butler.core.domain.generic.WorkspaceRoot
 import com.suarvis.butler.core.domain.tool.ToolInvocation
 import com.suarvis.butler.core.domain.tool.ToolOutcome
+import com.suarvis.butler.secondary.workspace.support.AtomicWrite
+import com.suarvis.butler.secondary.workspace.support.GrepSearchTool
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -27,12 +29,12 @@ import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
+import java.nio.file.attribute.PosixFilePermissions
 import java.time.Duration
 
 /**
- * Every rule of `read_file`, `glob_search` and `grep_search` against real files, each in its own
- * test. The workspace and a folder outside it sit side by side in a temp folder, so symlinks can
- * lead out of the workspace.
+ * Every rule of the five file tools against real files, each in its own test. The workspace and a
+ * folder outside it sit side by side in a temp folder, so symlinks can lead out of the workspace.
  */
 class LocalWorkspaceGatewayImplTest {
     @TempDir
@@ -579,14 +581,385 @@ class LocalWorkspaceGatewayImplTest {
         assertEquals(listOf(path("fast.txt")), filenames(success(outcome)))
     }
 
+    // write_file
+
+    @Test
+    fun `write_file creates a file and answers with Clawcode's envelope as pretty JSON`() {
+        val outcome = run(ToolInvocation.WriteFile(WorkspacePath("notes.txt"), "one\ntwo\n"))
+
+        val expected =
+            """
+            {
+              "type": "create",
+              "filePath": "${root.resolve("notes.txt")}",
+              "content": "one\ntwo\n",
+              "structuredPatch": [
+                {
+                  "oldStart": 0,
+                  "oldLines": 0,
+                  "newStart": 1,
+                  "newLines": 2,
+                  "lines": [
+                    "+one",
+                    "+two"
+                  ]
+                }
+              ],
+              "originalFile": null,
+              "gitDiff": null
+            }
+            """.trimIndent()
+        assertEquals(ToolOutcome(expected, preview = "--- /dev/null\n+++ notes.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n"), outcome)
+        assertEquals("one\ntwo\n", Files.readString(root.resolve("notes.txt")))
+    }
+
+    @Test
+    fun `write_file over a file is an update with the old text and hunks of changed lines in context`() {
+        val before = (1..10).joinToString("") { "$it\n" }
+        file("count.txt", before)
+
+        val outcome = run(ToolInvocation.WriteFile(WorkspacePath("count.txt"), before.replace("5\n", "five\n")))
+
+        val result = success(outcome)
+        assertEquals(listOf("type", "filePath", "content", "structuredPatch", "originalFile", "gitDiff"), result.keys.toList())
+        assertEquals("update", result.getValue("type").jsonPrimitive.content)
+        assertEquals(before, result.getValue("originalFile").jsonPrimitive.content)
+        assertEquals(listOf(Hunk(2, 7, 2, 7, listOf(" 2", " 3", " 4", "-5", "+five", " 6", " 7", " 8"))), hunks(result))
+        assertEquals("--- count.txt\n+++ count.txt\n@@ -2,7 +2,7 @@\n 2\n 3\n 4\n-5\n+five\n 6\n 7\n 8\n", outcome.preview)
+        assertEquals(before.replace("5\n", "five\n"), Files.readString(root.resolve("count.txt")))
+    }
+
+    @Test
+    fun `write_file creates missing parent folders`() {
+        val result = success(run(ToolInvocation.WriteFile(WorkspacePath("src/main/App.kt"), "fun main() {}\n")))
+
+        assertEquals(path("src/main/App.kt"), result.getValue("filePath").jsonPrimitive.content)
+        assertEquals("fun main() {}\n", Files.readString(root.resolve("src/main/App.kt")))
+    }
+
+    @Test
+    fun `write_file refuses a path under a linked folder that leads outside and creates nothing there`() {
+        link(root.resolve("shared"), outside)
+
+        val outcome = run(ToolInvocation.WriteFile(WorkspacePath("shared/deep/new.txt"), "x"))
+
+        assertEquals(ToolOutcome("path ${outside.resolve("deep/new.txt")} escapes workspace boundary $root", isError = true), outcome)
+        assertFalse(Files.exists(outside.resolve("deep")))
+    }
+
+    @Test
+    fun `write_file refuses a link to a file outside and leaves that file alone`() {
+        Files.writeString(outside.resolve("secret.txt"), "secret")
+        link(root.resolve("secret.txt"), outside.resolve("secret.txt"))
+
+        val outcome = run(ToolInvocation.WriteFile(WorkspacePath("secret.txt"), "overwritten"))
+
+        assertEquals(ToolOutcome("path ${outside.resolve("secret.txt")} escapes workspace boundary $root", isError = true), outcome)
+        assertEquals("secret", Files.readString(outside.resolve("secret.txt")))
+    }
+
+    @Test
+    fun `write_file refuses a dangling link whose target would be created outside`() {
+        link(root.resolve("planted.txt"), outside.resolve("created.txt"))
+
+        val outcome = run(ToolInvocation.WriteFile(WorkspacePath("planted.txt"), "x"))
+
+        assertEquals(ToolOutcome("path ${outside.resolve("created.txt")} escapes workspace boundary $root", isError = true), outcome)
+        assertFalse(Files.exists(outside.resolve("created.txt")))
+    }
+
+    @Test
+    fun `write_file through a link inside the workspace writes its target and keeps the link`() {
+        file("real.txt", "old\n")
+        link(root.resolve("alias.txt"), root.resolve("real.txt"))
+
+        val result = success(run(ToolInvocation.WriteFile(WorkspacePath("alias.txt"), "new\n")))
+
+        assertEquals(path("real.txt"), result.getValue("filePath").jsonPrimitive.content)
+        assertEquals("update", result.getValue("type").jsonPrimitive.content)
+        assertEquals("new\n", Files.readString(root.resolve("real.txt")))
+        assertTrue(Files.isSymbolicLink(root.resolve("alias.txt")))
+    }
+
+    @Test
+    fun `write_file through a dangling link inside the workspace creates its target`() {
+        link(root.resolve("alias.txt"), root.resolve("docs/real.txt"))
+
+        val result = success(run(ToolInvocation.WriteFile(WorkspacePath("alias.txt"), "new\n")))
+
+        assertEquals(path("docs/real.txt"), result.getValue("filePath").jsonPrimitive.content)
+        assertEquals("new\n", Files.readString(root.resolve("docs/real.txt")))
+        assertTrue(Files.isSymbolicLink(root.resolve("alias.txt")))
+    }
+
+    @Test
+    fun `write_file keeps an executable file executable`() {
+        assumePosix()
+        file("run.sh", "echo old\n")
+        val executable = PosixFilePermissions.fromString("rwxr-x---")
+        Files.setPosixFilePermissions(root.resolve("run.sh"), executable)
+
+        success(run(ToolInvocation.WriteFile(WorkspacePath("run.sh"), "echo new\n")))
+
+        assertEquals(executable, Files.getPosixFilePermissions(root.resolve("run.sh")))
+        assertEquals("echo new\n", Files.readString(root.resolve("run.sh")))
+    }
+
+    @Test
+    fun `write_file gives a new file the permissions of any new file, not the owner-only ones of a temp file`() {
+        assumePosix()
+        val usual = Files.getPosixFilePermissions(Files.createFile(temp.resolve("usual.txt")))
+
+        success(run(ToolInvocation.WriteFile(WorkspacePath("new.txt"), "x")))
+
+        assertEquals(usual, Files.getPosixFilePermissions(root.resolve("new.txt")))
+    }
+
+    @Test
+    fun `a write interrupted while moving into place leaves the old file whole and no temp file behind`() {
+        file("notes.txt", "old\n")
+
+        val outcome = interrupted().run(WorkspaceRoot.of(root), ToolInvocation.WriteFile(WorkspacePath("notes.txt"), "new\n"))
+
+        assertEquals(ToolOutcome("interrupted", isError = true), outcome)
+        assertEquals("old\n", Files.readString(root.resolve("notes.txt")))
+        assertEquals(listOf("notes.txt"), entries(root))
+    }
+
+    @Test
+    fun `write_file refuses content over 10 MB, creates nothing and has nothing to preview`() {
+        val write = ToolInvocation.WriteFile(WorkspacePath("big.txt"), "x".repeat(10 * 1024 * 1024 + 1))
+
+        assertNull(gateway.preview(WorkspaceRoot.of(root), write))
+        assertEquals(ToolOutcome("content is too large (10485761 bytes, max 10485760 bytes)", isError = true), run(write))
+        assertFalse(Files.exists(root.resolve("big.txt")))
+    }
+
+    @Test
+    fun `write_file refuses a file that may not be written, as writing it in place would fail`() {
+        assumePosix()
+        file("locked.txt", "old\n")
+        Files.setPosixFilePermissions(root.resolve("locked.txt"), PosixFilePermissions.fromString("r--r--r--"))
+        assumeTrue(!Files.isWritable(root.resolve("locked.txt")), "these tests run as a user who may write any file")
+
+        val outcome = run(ToolInvocation.WriteFile(WorkspacePath("locked.txt"), "new\n"))
+
+        assertEquals(ToolOutcome("Permission denied (os error 13)", isError = true), outcome)
+        assertEquals("old\n", Files.readString(root.resolve("locked.txt")))
+    }
+
+    @Test
+    fun `write_file onto a folder is an error`() {
+        Files.createDirectories(root.resolve("src"))
+
+        assertEquals(ToolOutcome("Is a directory (os error 21)", isError = true), run(ToolInvocation.WriteFile(WorkspacePath("src"), "x")))
+    }
+
+    @Test
+    fun `previewing a write shows the diff the write then reports, and creates nothing`() {
+        val write = ToolInvocation.WriteFile(WorkspacePath("docs/new.md"), "# Title\n")
+
+        val preview = gateway.preview(WorkspaceRoot.of(root), write)
+
+        assertEquals("--- /dev/null\n+++ docs/new.md\n@@ -0,0 +1 @@\n+# Title\n", preview)
+        assertFalse(Files.exists(root.resolve("docs")))
+        assertEquals(preview, run(write).preview)
+    }
+
+    @Test
+    fun `writing the same content again changes nothing and has nothing to preview`() {
+        file("same.txt", "a\n")
+        val write = ToolInvocation.WriteFile(WorkspacePath("same.txt"), "a\n")
+
+        assertNull(gateway.preview(WorkspaceRoot.of(root), write))
+        val outcome = run(write)
+        assertEquals(emptyList<Hunk>(), hunks(success(outcome)))
+        assertNull(outcome.preview)
+    }
+
+    // edit_file
+
+    @Test
+    fun `edit_file replaces the one match and answers with Clawcode's envelope as pretty JSON`() {
+        file("greek.txt", "alpha\nbeta\ngamma\n")
+
+        val outcome = run(ToolInvocation.EditFile(WorkspacePath("greek.txt"), "beta", "BETA"))
+
+        val expected =
+            """
+            {
+              "filePath": "${root.resolve("greek.txt")}",
+              "oldString": "beta",
+              "newString": "BETA",
+              "originalFile": "alpha\nbeta\ngamma\n",
+              "structuredPatch": [
+                {
+                  "oldStart": 1,
+                  "oldLines": 3,
+                  "newStart": 1,
+                  "newLines": 3,
+                  "lines": [
+                    " alpha",
+                    "-beta",
+                    "+BETA",
+                    " gamma"
+                  ]
+                }
+              ],
+              "userModified": false,
+              "replaceAll": false,
+              "gitDiff": null
+            }
+            """.trimIndent()
+        assertEquals(ToolOutcome(expected, preview = "--- greek.txt\n+++ greek.txt\n@@ -1,3 +1,3 @@\n alpha\n-beta\n+BETA\n gamma\n"), outcome)
+        assertEquals("alpha\nBETA\ngamma\n", Files.readString(root.resolve("greek.txt")))
+    }
+
+    @Test
+    fun `replace_all replaces every match`() {
+        file("names.txt", "foo\nbar foo\nfoo baz\n")
+
+        val result = success(run(ToolInvocation.EditFile(WorkspacePath("names.txt"), "foo", "qux", replaceAll = true)))
+
+        assertTrue(result.getValue("replaceAll").jsonPrimitive.boolean)
+        assertEquals("qux\nbar qux\nqux baz\n", Files.readString(root.resolve("names.txt")))
+    }
+
+    @Test
+    fun `an old_string that is not in the file is refused and the file is left byte for byte`() {
+        val bytes = "alpha\nbeta\n".toByteArray()
+        Files.write(root.resolve("greek.txt"), bytes)
+
+        val outcome = run(ToolInvocation.EditFile(WorkspacePath("greek.txt"), "delta", "DELTA"))
+
+        assertEquals(ToolOutcome("old_string not found in file", isError = true), outcome)
+        assertEquals(bytes.toList(), Files.readAllBytes(root.resolve("greek.txt")).toList())
+    }
+
+    @Test
+    fun `an old_string found twice without replace_all is refused and the file is left byte for byte`() {
+        val bytes = "beta\nalpha\nbeta\n".toByteArray()
+        Files.write(root.resolve("greek.txt"), bytes)
+
+        val outcome = run(ToolInvocation.EditFile(WorkspacePath("greek.txt"), "beta", "BETA"))
+
+        assertEquals(ToolOutcome("old_string matches 2 places; include more context or set replace_all", isError = true), outcome)
+        assertEquals(bytes.toList(), Files.readAllBytes(root.resolve("greek.txt")).toList())
+    }
+
+    @Test
+    fun `identical old_string and new_string are refused`() {
+        file("greek.txt", "alpha\n")
+
+        val outcome = run(ToolInvocation.EditFile(WorkspacePath("greek.txt"), "alpha", "alpha"))
+
+        assertEquals(ToolOutcome("old_string and new_string must differ", isError = true), outcome)
+    }
+
+    @Test
+    fun `CRLF line endings and a missing final newline are kept`() {
+        file("windows.txt", "one\r\ntwo\r\nthree")
+
+        val outcome = run(ToolInvocation.EditFile(WorkspacePath("windows.txt"), "two", "2"))
+
+        assertEquals("one\r\n2\r\nthree", Files.readString(root.resolve("windows.txt")))
+        assertEquals(listOf(Hunk(1, 3, 1, 3, listOf(" one", "-two", "+2", " three", "\\ No newline at end of file"))), hunks(success(outcome)))
+    }
+
+    @Test
+    fun `the preview of an edit is the diff the edit then makes, and changes nothing`() {
+        file("greek.txt", "alpha\nbeta\ngamma\ndelta\n")
+        val edit = ToolInvocation.EditFile(WorkspacePath("greek.txt"), "gamma\n", "")
+
+        val preview = gateway.preview(WorkspaceRoot.of(root), edit)
+
+        assertEquals("--- greek.txt\n+++ greek.txt\n@@ -1,4 +1,3 @@\n alpha\n beta\n-gamma\n delta\n", preview)
+        assertEquals("alpha\nbeta\ngamma\ndelta\n", Files.readString(root.resolve("greek.txt")))
+        assertEquals(preview, run(edit).preview)
+        assertEquals("alpha\nbeta\ndelta\n", Files.readString(root.resolve("greek.txt")))
+    }
+
+    @Test
+    fun `an edit that would be refused has nothing to preview`() {
+        file("greek.txt", "beta\nbeta\n")
+        val workspace = WorkspaceRoot.of(root)
+
+        assertNull(gateway.preview(workspace, ToolInvocation.EditFile(WorkspacePath("greek.txt"), "delta", "x")))
+        assertNull(gateway.preview(workspace, ToolInvocation.EditFile(WorkspacePath("greek.txt"), "beta", "x")))
+        assertNull(gateway.preview(workspace, ToolInvocation.EditFile(WorkspacePath("missing.txt"), "beta", "x")))
+    }
+
+    @Test
+    fun `edit_file on a missing file is an error`() {
+        val outcome = run(ToolInvocation.EditFile(WorkspacePath("missing.txt"), "a", "b"))
+
+        assertEquals(ToolOutcome("No such file or directory (os error 2)", isError = true), outcome)
+    }
+
+    @Test
+    fun `edit_file refuses text that is not UTF-8`() {
+        Files.write(root.resolve("latin1.txt"), byteArrayOf(0x63, 0x61, 0x66, 0xE9.toByte()))
+
+        val outcome = run(ToolInvocation.EditFile(WorkspacePath("latin1.txt"), "c", "k"))
+
+        assertEquals(ToolOutcome("stream did not contain valid UTF-8", isError = true), outcome)
+    }
+
+    @Test
+    fun `edit_file refuses a link leading outside and leaves its target alone`() {
+        Files.writeString(outside.resolve("secret.txt"), "secret")
+        link(root.resolve("secret.txt"), outside.resolve("secret.txt"))
+
+        val outcome = run(ToolInvocation.EditFile(WorkspacePath("secret.txt"), "secret", "leaked"))
+
+        assertEquals(ToolOutcome("path ${outside.resolve("secret.txt")} escapes workspace boundary $root", isError = true), outcome)
+        assertEquals("secret", Files.readString(outside.resolve("secret.txt")))
+    }
+
+    @Test
+    fun `edit_file through a link inside the workspace edits its target and keeps the link`() {
+        file("real.txt", "old\n")
+        link(root.resolve("alias.txt"), root.resolve("real.txt"))
+
+        val result = success(run(ToolInvocation.EditFile(WorkspacePath("alias.txt"), "old", "new")))
+
+        assertEquals(path("real.txt"), result.getValue("filePath").jsonPrimitive.content)
+        assertEquals("new\n", Files.readString(root.resolve("real.txt")))
+        assertTrue(Files.isSymbolicLink(root.resolve("alias.txt")))
+    }
+
+    @Test
+    fun `an edit keeps an executable file executable`() {
+        assumePosix()
+        file("run.sh", "echo old\n")
+        val executable = PosixFilePermissions.fromString("rwxr-xr-x")
+        Files.setPosixFilePermissions(root.resolve("run.sh"), executable)
+
+        success(run(ToolInvocation.EditFile(WorkspacePath("run.sh"), "old", "new")))
+
+        assertEquals(executable, Files.getPosixFilePermissions(root.resolve("run.sh")))
+    }
+
+    @Test
+    fun `an edit interrupted while moving into place leaves the old file whole and no temp file behind`() {
+        file("notes.txt", "old\n")
+
+        val outcome = interrupted().run(WorkspaceRoot.of(root), ToolInvocation.EditFile(WorkspacePath("notes.txt"), "old", "new"))
+
+        assertEquals(ToolOutcome("interrupted", isError = true), outcome)
+        assertEquals("old\n", Files.readString(root.resolve("notes.txt")))
+        assertEquals(listOf("notes.txt"), entries(root))
+    }
+
     // Routing
 
     @Test
-    fun `write_file and edit_file are not available yet`() {
+    fun `write_file and edit_file reach their tools`() {
         val path = WorkspacePath("a.txt")
 
-        assertEquals(ToolOutcome("write_file is not available in this build yet", isError = true), run(ToolInvocation.WriteFile(path, "a")))
-        assertEquals(ToolOutcome("edit_file is not available in this build yet", isError = true), run(ToolInvocation.EditFile(path, "a", "b")))
+        assertFalse(run(ToolInvocation.WriteFile(path, "a")).isError)
+        assertFalse(run(ToolInvocation.EditFile(path, "a", "b")).isError)
+        assertEquals("b", Files.readString(root.resolve("a.txt")))
     }
 
     @Test
@@ -599,11 +972,41 @@ class LocalWorkspaceGatewayImplTest {
     }
 
     @Test
-    fun `no tool offers a preview yet`() {
-        assertNull(gateway.preview(WorkspaceRoot.of(root), ToolInvocation.WriteFile(WorkspacePath("a.txt"), "a")))
+    fun `reading, searching and other gateways' tools have nothing to preview`() {
+        file("a.txt", "a")
+        val workspace = WorkspaceRoot.of(root)
+
+        assertNull(gateway.preview(workspace, ToolInvocation.ReadFile(WorkspacePath("a.txt"))))
+        assertNull(gateway.preview(workspace, ToolInvocation.GlobSearch("*")))
+        assertNull(gateway.preview(workspace, ToolInvocation.GrepSearch("a")))
+        assertNull(gateway.preview(workspace, ToolInvocation.Bash("ls")))
     }
 
     private data class Read(val filePath: String, val content: String, val numLines: Int, val startLine: Int, val totalLines: Int)
+
+    private data class Hunk(val oldStart: Int, val oldLines: Int, val newStart: Int, val newLines: Int, val lines: List<String>)
+
+    private fun hunks(result: JsonObject): List<Hunk> =
+        result.getValue("structuredPatch").jsonArray.map { element ->
+            val hunk = element.jsonObject
+            Hunk(
+                oldStart = hunk.getValue("oldStart").jsonPrimitive.int,
+                oldLines = hunk.getValue("oldLines").jsonPrimitive.int,
+                newStart = hunk.getValue("newStart").jsonPrimitive.int,
+                newLines = hunk.getValue("newLines").jsonPrimitive.int,
+                lines = hunk.getValue("lines").jsonArray.map { it.jsonPrimitive.content },
+            )
+        }
+
+    /** A gateway whose writes fail at the final move, as a crash between writing the temp file and moving it would. */
+    private fun interrupted(): LocalWorkspaceGatewayImpl =
+        LocalWorkspaceGatewayImpl(GrepSearchTool.FILE_DEADLINE, AtomicWrite { _, _ -> throw IOException("interrupted") })
+
+    private fun entries(folder: Path): List<String> =
+        Files.newDirectoryStream(folder).use { listing -> listing.map { it.fileName.toString() }.sorted() }
+
+    private fun assumePosix() =
+        assumeTrue(root.fileSystem.supportedFileAttributeViews().contains("posix"), "this file system has no POSIX permissions")
 
     private fun run(invocation: ToolInvocation): ToolOutcome = gateway.run(WorkspaceRoot.of(root), invocation)
 
