@@ -24,8 +24,9 @@ import org.springframework.stereotype.Component
 
 /**
  * Interactive mode (`butler`, `butler --resume SESSION`): each line is a prompt, or a slash command
- * when it starts with `/`. Errors are reported and the loop continues. Reads plain lines from stdin,
- * so it also works with piped input; line editing, history and Ctrl-C interruption come later.
+ * when it starts with `/`. Errors are reported and the loop continues. At a terminal the console is
+ * a line editor with history; piped input is read line by line. Ctrl-C clears a typed line, or
+ * leaves on an empty one; during a turn it stops the turn ([TurnInterrupts]) and the REPL goes on.
  */
 @Component
 class ReplRunner(
@@ -37,6 +38,7 @@ class ReplRunner(
     private val toolApprovers: CliToolApprovers,
     private val exceptions: CliExceptionHandler,
     private val console: CliConsole,
+    private val interrupts: TurnInterrupts,
 ) {
     private class State(
         var session: SessionReference.ById?,
@@ -58,11 +60,8 @@ class ReplRunner(
             say(state, "Butler ${ButlerVersion.current} · ${invocation.workspace} · /help for commands, /exit to leave")
         }
         while (true) {
-            if (interactive) {
-                console.out.print("> ")
-                console.out.flush()
-            }
-            val line = console.readLine()?.trim() ?: break
+            // "" when Ctrl-C cleared a typed line; null at the end of input or on Ctrl-C at an empty line.
+            val line = console.readLine(if (interactive) PROMPT else "")?.trim() ?: break
             if (line.isEmpty()) continue
             val keepGoing =
                 try {
@@ -77,8 +76,21 @@ class ReplRunner(
     }
 
     private fun prompt(state: State, text: String): Boolean {
-        val summary = prompts.run(state.invocation, text, state.session, compact = false, approver = state.approver, toolApprover = state.toolApprover)
+        val summary =
+            interrupts.during { cancellation ->
+                prompts.run(
+                    state.invocation,
+                    text,
+                    state.session,
+                    compact = false,
+                    approver = state.approver,
+                    toolApprover = state.toolApprover,
+                    cancellation = cancellation,
+                )
+            }
         state.session = SessionReference.ById(summary.session.id)
+        // Clawcode's spinner ends such a turn with "⏹ Interrupted"; Butler prints the word without the symbol.
+        if (summary.interrupted) say(state, "Interrupted")
         return true
     }
 
@@ -106,7 +118,7 @@ class ReplRunner(
                 is SlashCommand.SessionDelete -> sessions.delete(invocation, SessionReference.parse(command.target))
                 SlashCommand.Version -> say(state, "butler ${ButlerVersion.current}")
                 SlashCommand.Help ->
-                    say(state, "Type a prompt, or a slash command: ${SlashCommandParser.SUPPORTED}, ${SlashCommandParser.INTERACTIVE_ONLY}")
+                    say(state, "Type a prompt, or a slash command: ${SlashCommandParser.SUPPORTED}, ${SlashCommandParser.INTERACTIVE_ONLY}\n\n$KEYS_HELP")
             }
         }
         return true
@@ -191,6 +203,23 @@ class ReplRunner(
     }
 
     private companion object {
+        const val PROMPT = "> "
+
+        /**
+         * The keys, in Clawcode's `render_repl_help` layout and words where Butler has the key. Tab
+         * completion, Esc and multi-line input are not there yet, so they are left out, and Ctrl-C
+         * takes Esc's place for stopping a turn; Ctrl-D is Butler's addition to the list.
+         */
+        val KEYS_HELP =
+            listOf(
+                "Keys",
+                "  Up/Down              Navigate prompt history",
+                "  Ctrl-R               Reverse-search prompt history",
+                "  Ctrl-C               Clear input (or exit on empty prompt)",
+                "  Ctrl-C during a turn Interrupt the running turn (twice to quit)",
+                "  Ctrl-D               Exit on empty prompt",
+            ).joinToString("\n")
+
         val PERMISSION_MODE_DESCRIPTIONS =
             linkedMapOf(
                 PermissionMode.READ_ONLY to "Read/search tools only",

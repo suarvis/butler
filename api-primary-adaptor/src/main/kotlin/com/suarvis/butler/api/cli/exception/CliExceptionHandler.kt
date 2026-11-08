@@ -46,6 +46,7 @@ class CliExceptionHandler(
             is InvalidWorkingDirectoryException ->
                 CliFailure("invalid_cwd", cause.messageOrName(), "Pass an existing folder with --cwd PATH.", ExitCodes.RUNTIME)
             is CliOutputPathException -> CliFailure("invalid_output_path", cause.messageOrName(), null, ExitCodes.RUNTIME)
+            is CliInterruptedException -> CliFailure("interrupted", cause.messageOrName(), cause.hint, ExitCodes.INTERRUPTED)
             is AuthorizationDeniedException ->
                 CliFailure(cause.decision.kind, cause.decision.reason, cause.decision.hint, ExitCodes.RUNTIME)
             is ButlerException -> classifyDomain(cause)
@@ -157,6 +158,7 @@ class CliExceptionHandler(
             this is CommandLine.ParameterException ||
             this is InvalidWorkingDirectoryException ||
             this is CliOutputPathException ||
+            this is CliInterruptedException ||
             this is AuthorizationDeniedException
 
     private fun Throwable.messageOrName(): String = message ?: javaClass.simpleName

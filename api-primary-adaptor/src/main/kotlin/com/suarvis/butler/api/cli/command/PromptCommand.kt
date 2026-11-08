@@ -1,6 +1,5 @@
 package com.suarvis.butler.api.cli.command
 
-import com.suarvis.butler.api.cli.ExitCodes
 import com.suarvis.butler.api.cli.action.PromptActions
 import com.suarvis.butler.core.domain.session.SessionReference
 import picocli.CommandLine.Command
@@ -41,7 +40,6 @@ class PromptCommand(
 
     override fun call(): Int {
         val invocation = resolver.resolve(spec)
-        prompts.run(invocation, prompts.promptText(text.orEmpty(), readStdin), session?.let(SessionReference::parse), compact)
-        return ExitCodes.OK
+        return prompts.runOnce(invocation, prompts.promptText(text.orEmpty(), readStdin), session?.let(SessionReference::parse), compact)
     }
 }

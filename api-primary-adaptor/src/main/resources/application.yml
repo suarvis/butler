@@ -125,3 +125,11 @@ butler:
     allow: []
     deny: []
     ask: []
+
+  # The terminal. line-editor: auto or jline (JLine's line editor with history when a person is at a
+  # terminal; piped input always gets the plain reader) or plain, the fallback if JLine misbehaves in
+  # some terminal. color: auto (colour at a terminal unless NO_COLOR is set), always or never.
+  # From the environment: BUTLER_CLI_LINEEDITOR=plain, BUTLER_CLI_COLOR=never.
+  cli:
+    line-editor: auto
+    color: auto

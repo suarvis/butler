@@ -15,6 +15,9 @@ dependencies {
     implementation(libs.kotlin.reflect)
     implementation(libs.picocli)
     implementation(libs.kotlinx.serialization.json)
+    // The line editor for interactive use. The jdk11 variant leaves out the FFM terminal (Java 22
+    // class files) and reaches the terminal through JNI or exec instead, so it runs on JDK 21.
+    implementation(variantOf(libs.jline) { classifier("jdk11") })
 
     testImplementation(testFixtures(project(":core")))
     testImplementation(platform(libs.spring.boot.bom))

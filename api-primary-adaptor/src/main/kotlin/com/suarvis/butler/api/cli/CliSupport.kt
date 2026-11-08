@@ -7,11 +7,17 @@ import java.io.PrintStream
 import java.nio.file.Files
 import java.nio.file.Path
 
-/** Exit codes shared with Clawcode: 0 success, 1 runtime failure, 2 usage error. */
+/** Exit codes shared with Clawcode: 0 success, 1 runtime failure, 2 usage error; and Butler's 130. */
 object ExitCodes {
     const val OK = 0
     const val RUNTIME = 1
     const val USAGE = 2
+
+    /**
+     * 128 + SIGINT, what a shell reports for a process stopped by Ctrl-C: a second Ctrl-C during a
+     * turn, or a one-shot prompt whose turn Ctrl-C stopped. Clawcode has no such code.
+     */
+    const val INTERRUPTED = 130
 }
 
 enum class OutputFormat {
@@ -58,13 +64,18 @@ interface CliConsole {
     val interactive: Boolean
 
     /**
-     * The next line of input, or null at the end. The REPL and approval prompts both read through
-     * this, so neither swallows input buffered for the other.
+     * Shows [prompt] and returns the next line; "" when Ctrl-C cleared a typed line; null at the end
+     * of input, or on Ctrl-C or Ctrl-D at an empty line. The REPL and every approval prompt read
+     * through this, so one reader owns stdin and neither swallows input buffered for the other.
+     * The reader draws the prompt itself, since a line editor must redraw it with the line.
      */
-    fun readLine(): String?
+    fun readLine(prompt: String = ""): String?
 }
 
-@Component
+/**
+ * The plain reader: one buffered line reader over stdin, for piped input and for terminals where
+ * `butler.cli.line-editor=plain`. [com.suarvis.butler.api.config.CliConfig] picks it or the JLine one.
+ */
 class SystemCliConsole : CliConsole {
     override val input: InputStream
         get() = System.`in`
@@ -78,19 +89,27 @@ class SystemCliConsole : CliConsole {
     private var reader: Pair<InputStream, BufferedReader>? = null
 
     @Synchronized
-    override fun readLine(): String? {
+    override fun readLine(prompt: String): String? {
+        if (prompt.isNotEmpty()) {
+            out.print(prompt)
+            out.flush()
+        }
         // Keyed by the stream so a redirected System.in (tests run several CLIs per JVM) gets a fresh reader.
         val current = System.`in`
         val cached = reader?.takeIf { it.first === current } ?: (current to current.bufferedReader()).also { reader = it }
         return cached.second.readLine()
     }
 
-    // JDK 22+ returns a Console even when redirected, so ask it whether it is a terminal when possible.
     override val interactive: Boolean
-        get() {
+        get() = detectInteractive()
+
+    companion object {
+        /** Whether stdin and stdout are a terminal. JDK 22+ returns a Console even when redirected, so ask it whether it is a terminal when possible. */
+        fun detectInteractive(): Boolean {
             val console = System.console() ?: return false
             return runCatching { console.javaClass.getMethod("isTerminal").invoke(console) as Boolean }.getOrDefault(true)
         }
+    }
 }
 
 /** Process environment, isolated so rules and resolvers stay unit-testable. */

@@ -1,7 +1,6 @@
 package com.suarvis.butler.api.cli.command
 
 import com.suarvis.butler.api.cli.ButlerVersion
-import com.suarvis.butler.api.cli.ExitCodes
 import com.suarvis.butler.api.cli.action.PromptActions
 import com.suarvis.butler.api.cli.repl.ReplRunner
 import com.suarvis.butler.api.cli.repl.ResumeRunner
@@ -86,10 +85,7 @@ class ButlerCommand(
         return when {
             reference != null && rest.isEmpty() && !reference.startsWith("/") -> replRunner.run(invocation, SessionReference.parse(reference))
             reference != null -> resumeRunner.run(invocation, reference, rest)
-            rest.isNotEmpty() -> {
-                prompts.run(invocation, prompts.promptText(rest, readStdin = false), session = null, compact = false)
-                ExitCodes.OK
-            }
+            rest.isNotEmpty() -> prompts.runOnce(invocation, prompts.promptText(rest, readStdin = false), session = null, compact = false)
             else -> replRunner.run(invocation)
         }
     }

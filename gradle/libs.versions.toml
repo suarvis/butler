@@ -5,6 +5,8 @@ kotlinx-serialization = "1.9.0"
 picocli = "4.7.7"
 archunit = "1.4.1"
 junit = "6.0.0"
+# The api module takes the jdk11 classifier: the default jar holds an FFM terminal compiled for Java 22.
+jline = "4.4.8"
 
 [libraries]
 # Gradle plugins used by build-logic convention plugins
@@ -32,6 +34,7 @@ kotlin-reflect = { module = "org.jetbrains.kotlin:kotlin-reflect", version.ref =
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 picocli = { module = "info.picocli:picocli", version.ref = "picocli" }
 archunit = { module = "com.tngtech.archunit:archunit", version.ref = "archunit" }
+jline = { module = "org.jline:jline", version.ref = "jline" }
 
 # Test (versions from junit-bom)
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }

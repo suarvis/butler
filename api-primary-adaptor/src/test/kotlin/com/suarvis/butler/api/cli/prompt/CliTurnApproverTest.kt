@@ -33,7 +33,11 @@ class CliTurnApproverTest {
         override val out = PrintStream(outBuffer, true, Charsets.UTF_8)
         override val err = PrintStream(errBuffer, true, Charsets.UTF_8)
 
-        override fun readLine(): String? = lines.readLine()
+        /** Prints the prompt, as the plain console does, so the transcript reads as a person sees it. */
+        override fun readLine(prompt: String): String? {
+            out.print(prompt)
+            return lines.readLine()
+        }
 
         val printed: String
             get() = outBuffer.toString(Charsets.UTF_8)

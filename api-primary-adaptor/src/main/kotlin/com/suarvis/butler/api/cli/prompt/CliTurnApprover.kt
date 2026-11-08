@@ -52,9 +52,8 @@ class CliTurnApprover(
                 "[s] stop"
         out.println("  " + options.joinToString("   "))
         repeat(MAX_PROMPTS) {
-            out.print("Choice [s]: ")
-            out.flush()
-            val answer = console.readLine()?.trim()?.lowercase() ?: return ApprovalDecision.Stop
+            // Ctrl-C here gives "" or null, both a stop, and also stops the turn (TurnInterrupts).
+            val answer = console.readLine("Choice [s]: ")?.trim()?.lowercase() ?: return ApprovalDecision.Stop
             val chosen = answer.toIntOrNull()?.let { request.alternatives.getOrNull(it - 1) }
             when {
                 answer == "c" || answer == "continue" -> {

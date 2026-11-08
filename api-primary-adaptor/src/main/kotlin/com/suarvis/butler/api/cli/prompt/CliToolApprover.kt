@@ -66,9 +66,8 @@ class CliToolApprover(
         out.println("  Input            ${truncate(request.call.input.value)}")
         request.preview?.trimEnd('\n')?.takeIf { it.isNotBlank() }?.let { out.println(it) }
         request.bashRisk?.warning?.takeIf { request.invocation is ToolInvocation.Bash }?.let { out.println("warning: $it") }
-        out.print(if (grant != null) "Approve this tool call? [y/a/N]: " else "Approve this tool call? [y/N]: ")
-        out.flush()
-        val answer = console.readLine()?.trim()?.lowercase()
+        // Ctrl-C here gives "" or null, both a denial, and also stops the turn (TurnInterrupts).
+        val answer = console.readLine(if (grant != null) "Approve this tool call? [y/a/N]: " else "Approve this tool call? [y/N]: ")?.trim()?.lowercase()
         return when {
             answer == "y" || answer == "yes" -> ToolApprovalDecision.ALLOW_ONCE
             grant != null && (answer == "a" || answer == "always") -> {
