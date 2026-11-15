@@ -4,6 +4,7 @@ import com.suarvis.butler.api.cli.CliEnvironment
 import com.suarvis.butler.api.cli.OutputFormat
 import com.suarvis.butler.api.cli.exception.CliUsageException
 import com.suarvis.butler.api.cli.exception.InvalidWorkingDirectoryException
+import com.suarvis.butler.api.config.PermissionModeProperties
 import com.suarvis.butler.api.security.authorization.rules.BroadWorkingDirectoryRule
 import com.suarvis.butler.api.security.authorization.rules.WorkingDirectoryRequest
 import com.suarvis.butler.core.domain.generic.ModelId
@@ -19,7 +20,8 @@ import java.nio.file.Path
 /**
  * Everything a command needs to know about how it was invoked.
  *
- * @param permissionMode the mode turns run in: `--permission-mode`, `--dangerously-skip-permissions`, or `prompt`.
+ * @param permissionMode the mode turns run in: `--permission-mode` or `--dangerously-skip-permissions`,
+ *   else `butler.permissions.default-mode`, else `prompt`.
  * @param allowedTools the tools `--allowedTools` leaves on; null when the flag is absent (every tool).
  */
 data class CliInvocation(
@@ -36,6 +38,7 @@ class CliInvocationResolver(
     private val environment: CliEnvironment,
     private val broadWorkingDirectoryRule: BroadWorkingDirectoryRule,
     private val listTools: ListToolsUseCase,
+    private val permissionModes: PermissionModeProperties,
 ) {
     /** For commands that work on a workspace: resolves the folder and applies the broad-cwd rule. */
     fun resolve(spec: CommandSpec): CliInvocation {
@@ -68,9 +71,11 @@ class CliInvocationResolver(
      * The innermost `--permission-mode` wins, as for every global flag; each value given is checked.
      * `--dangerously-skip-permissions` means danger-full-access, as in Clawcode. Clawcode lets the
      * later of the two flags win; Butler refuses both together, since one of them would be ignored
-     * silently and either may have been the one meant.
+     * silently and either may have been the one meant. Without either flag the configured default
+     * mode applies; it is checked on every run, so a wrong value never hides behind a flag.
      */
     private fun permissionMode(options: List<GlobalOptions>): PermissionMode {
+        val configured = configuredMode()
         val requested =
             options.mapNotNull { it.permissionMode }.map { label ->
                 PermissionFlags.parseMode(label)
@@ -84,7 +89,18 @@ class CliInvocationResolver(
                 "Pass only one: --dangerously-skip-permissions is the same as ${PermissionFlags.MODE_FLAG} danger-full-access.",
             )
         }
-        return if (skip) PermissionMode.DANGER_FULL_ACCESS else requested.firstOrNull() ?: PermissionMode.PROMPT
+        return if (skip) PermissionMode.DANGER_FULL_ACCESS else requested.firstOrNull() ?: configured
+    }
+
+    /** `butler.permissions.default-mode`, read as the flag reads its value; `prompt` when unset or blank. */
+    private fun configuredMode(): PermissionMode {
+        val label = permissionModes.defaultMode?.takeIf { it.isNotBlank() } ?: return PermissionMode.PROMPT
+        return PermissionFlags.parseMode(label)
+            ?: throw CliUsageException(
+                "invalid_permission_mode",
+                "unsupported permission mode '$label' in $DEFAULT_MODE_PROPERTY.",
+                "Set $DEFAULT_MODE_PROPERTY (or $DEFAULT_MODE_VARIABLE) to read-only, workspace-write, danger-full-access, prompt or allow.",
+            )
     }
 
     /**
@@ -110,5 +126,10 @@ class CliInvocationResolver(
         if (!Files.isDirectory(candidate)) throw InvalidWorkingDirectoryException(candidate)
         // Real path so that /tmp and /private/tmp (macOS) name the same workspace.
         return candidate.toRealPath()
+    }
+
+    private companion object {
+        const val DEFAULT_MODE_PROPERTY = "butler.permissions.default-mode"
+        const val DEFAULT_MODE_VARIABLE = "BUTLER_PERMISSIONS_DEFAULTMODE"
     }
 }

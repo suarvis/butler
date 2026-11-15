@@ -125,6 +125,11 @@ butler:
     allow: []
     deny: []
     ask: []
+    # The mode a run starts in when no --permission-mode or --dangerously-skip-permissions is given.
+    # prompt asks before every write or risky command (read-only tools never ask); workspace-write
+    # never asks about changes inside the project. Any --permission-mode label works, Clawcode's
+    # aliases included. From the environment: BUTLER_PERMISSIONS_DEFAULTMODE=workspace-write.
+    default-mode: prompt
 
   # The terminal. line-editor: auto or jline (JLine's line editor with history when a person is at a
   # terminal; piped input always gets the plain reader) or plain, the fallback if JLine misbehaves in

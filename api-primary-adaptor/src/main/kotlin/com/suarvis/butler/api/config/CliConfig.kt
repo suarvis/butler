@@ -12,7 +12,7 @@ import org.springframework.context.annotation.Configuration
 
 /** The terminal side of the CLI: which console reads and writes, and where Ctrl-C during a turn comes from. */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(CliProperties::class)
+@EnableConfigurationProperties(CliProperties::class, PermissionModeProperties::class)
 class CliConfig {
     /** Closed with the context, so a JLine terminal gets its modes back before the process ends. */
     @Bean
