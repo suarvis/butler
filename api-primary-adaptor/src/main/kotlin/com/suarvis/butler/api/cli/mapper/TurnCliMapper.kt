@@ -1,16 +1,22 @@
 package com.suarvis.butler.api.cli.mapper
 
+import com.suarvis.butler.api.cli.dto.PermissionDenialOutput
 import com.suarvis.butler.api.cli.dto.PromptResultOutput
 import com.suarvis.butler.api.cli.dto.ToolResultOutput
 import com.suarvis.butler.api.cli.dto.ToolUseOutput
 import com.suarvis.butler.core.domain.generic.MessageRole
+import com.suarvis.butler.core.domain.turn.ToolApprovalRequest
 import com.suarvis.butler.core.domain.turn.TurnSummary
 import java.math.BigDecimal
 import java.math.RoundingMode
 
 /** Domain turn results ↔ CLI output DTOs. */
 object TurnCliMapper {
-    fun toPromptResult(summary: TurnSummary): PromptResultOutput {
+    /** @param denials the approval requests the CLI denied during this turn, in order (D5). */
+    fun toPromptResult(
+        summary: TurnSummary,
+        denials: List<ToolApprovalRequest> = emptyList(),
+    ): PromptResultOutput {
         val messages = summary.session.messages
         val turnMessages = messages.drop(messages.indexOfLast { it.role == MessageRole.USER } + 1)
         return PromptResultOutput(
@@ -23,6 +29,7 @@ object TurnCliMapper {
             toolResults =
                 turnMessages.flatMap { it.toolResults }
                     .map { ToolResultOutput(it.toolUseId.value, it.toolName.value, it.output, it.isError) },
+            permissionDenials = denials.map { PermissionDenialOutput(it.call.name.value, it.call.id.value, it.reason) },
             usage = SessionCliMapper.toUsage(summary.usage),
             estimatedCost = summary.estimatedCostUsd()?.let(::formatUsd),
             stopReason = summary.stopReason.name.lowercase(),

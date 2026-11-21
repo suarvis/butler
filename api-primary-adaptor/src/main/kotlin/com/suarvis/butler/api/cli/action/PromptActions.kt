@@ -9,6 +9,7 @@ import com.suarvis.butler.api.cli.dto.PromptResultOutput
 import com.suarvis.butler.api.cli.exception.CliInterruptedException
 import com.suarvis.butler.api.cli.exception.CliUsageException
 import com.suarvis.butler.api.cli.mapper.TurnCliMapper
+import com.suarvis.butler.api.cli.prompt.CliToolApprover
 import com.suarvis.butler.api.cli.prompt.CliToolApprovers
 import com.suarvis.butler.api.cli.prompt.CliTurnApprovers
 import com.suarvis.butler.api.cli.render.CliOutputWriter
@@ -17,6 +18,7 @@ import com.suarvis.butler.api.cli.render.TerminalStyle
 import com.suarvis.butler.api.cli.repl.TurnInterrupts
 import com.suarvis.butler.api.config.CliProperties
 import com.suarvis.butler.core.domain.session.SessionReference
+import com.suarvis.butler.core.domain.turn.ToolApprovalRequest
 import com.suarvis.butler.core.domain.turn.ToolApprover
 import com.suarvis.butler.core.domain.turn.TurnApprover
 import com.suarvis.butler.core.domain.turn.TurnCallbacks
@@ -57,8 +59,10 @@ class PromptActions(
         toolApprover: ToolApprover = toolApprovers.create(invocation),
         cancellation: TurnCancellation = TurnCancellation.NEVER,
     ): TurnSummary {
+        val earlier = denialsOf(toolApprover).size
         val summary = execute(invocation, prompt, session, compact, TurnCallbacks(approver = approver, toolApprover = toolApprover, cancellation = cancellation))
-        present(invocation, summary, compact)
+        // A REPL session shares one approver, so only this turn's denials belong to this result.
+        present(invocation, summary, compact, denialsOf(toolApprover).drop(earlier))
         return summary
     }
 
@@ -73,13 +77,15 @@ class PromptActions(
         session: SessionReference?,
         compact: Boolean,
     ): Int {
-        val callbacks = TurnCallbacks(approver = approvers.create(invocation), toolApprover = toolApprovers.create(invocation))
+        val toolApprover = toolApprovers.create(invocation)
+        val callbacks = TurnCallbacks(approver = approvers.create(invocation), toolApprover = toolApprover)
         val summary =
             interrupts.during { cancellation ->
                 execute(invocation, prompt, session, compact, callbacks.copy(cancellation = cancellation))
             }
         if (summary.interrupted) throw CliInterruptedException(summary.session.id.value)
-        present(invocation, summary, compact)
+        // Denials are data for the script, not a failure: the turn finished, so the exit code stays 0.
+        present(invocation, summary, compact, toolApprover.denials)
         return ExitCodes.OK
     }
 
@@ -111,16 +117,24 @@ class PromptActions(
     }
 
     /** Prints what streaming did not: the final text with --compact, or the JSON result. */
-    private fun present(invocation: CliInvocation, summary: TurnSummary, compact: Boolean) {
+    private fun present(
+        invocation: CliInvocation,
+        summary: TurnSummary,
+        compact: Boolean,
+        denials: List<ToolApprovalRequest>,
+    ) {
         when {
             streams(invocation, compact) -> Unit
             invocation.format == OutputFormat.TEXT -> {
                 console.out.println(summary.finalText)
                 console.out.flush()
             }
-            else -> output.success(invocation.format, PromptResultOutput.serializer(), TurnCliMapper.toPromptResult(summary)) { summary.finalText }
+            else -> output.success(invocation.format, PromptResultOutput.serializer(), TurnCliMapper.toPromptResult(summary, denials)) { summary.finalText }
         }
     }
+
+    /** What [approver] denied so far; only the CLI's own approver keeps a list, test doubles may not. */
+    private fun denialsOf(approver: ToolApprover): List<ToolApprovalRequest> = (approver as? CliToolApprover)?.denials.orEmpty()
 
     private fun streams(invocation: CliInvocation, compact: Boolean): Boolean = invocation.format == OutputFormat.TEXT && !compact
 

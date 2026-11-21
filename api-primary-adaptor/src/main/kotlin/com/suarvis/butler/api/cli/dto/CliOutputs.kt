@@ -180,6 +180,17 @@ data class ToolResultOutput(
     val isError: Boolean,
 )
 
+/**
+ * A tool call denied because it needed approval and nobody could give it: no terminal, or JSON
+ * output (D5). [reason] is why the policy asked; the model got the call's error result.
+ */
+@Serializable
+data class PermissionDenialOutput(
+    val tool: String,
+    val toolUseId: String,
+    val reason: String,
+)
+
 /** Clawcode's one-shot prompt result (`claw --output-format json prompt ...`) plus kind/status/session/provider. */
 @Serializable
 data class PromptResultOutput(
@@ -193,6 +204,8 @@ data class PromptResultOutput(
     val autoCompaction: String? = null,
     val toolUses: List<ToolUseOutput>,
     val toolResults: List<ToolResultOutput>,
+    /** Calls the turn would have asked about; a script cannot answer, so each was denied. Always present, often empty. */
+    val permissionDenials: List<PermissionDenialOutput> = emptyList(),
     val promptCacheEvents: List<String> = emptyList(),
     val usage: UsageOutput,
     val estimatedCost: String?,
